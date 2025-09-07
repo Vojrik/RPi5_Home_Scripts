@@ -1,0 +1,16 @@
+defaults
+auth on
+tls on
+tls_starttls off
+tls_trust_file /etc/ssl/certs/ca-certificates.crt
+logfile /home/vojrik/Scripts/Disck_checks/.msmtp.log
+
+account primary
+host smtp.seznam.cz
+port 465
+from your_mail@seznam.cz
+user your_mail@seznam.cz
+passwordeval "cat /home/vojrik/Scripts/Disck_checks/.msmtp.pass"
+
+account default : primary
+
