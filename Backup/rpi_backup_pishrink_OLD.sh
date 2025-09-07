@@ -138,30 +138,11 @@ fi
 run() {
   echo "+ $*"
   if $DRY_RUN; then return 0; fi
-  { "$@" ; } 2>&1 | tee -a "$LOG_PATH"
+  { "$@"; } 2>&1 | tee -a "$LOG_PATH"
 }
 
 echo "Log: $LOG_PATH"
 echo "Start: $(date -Is)" | tee -a "$LOG_PATH"
-
-# --- Čištění stavových souborů Home Assistant + Zigbee2MQTT (bezpečný snapshot) ---
-read -r -p "Promazat runtime stav (HA, Zigbee2MQTT) před zálohou? [y/N]: " cleandata || true
-if [[ "$cleandata" =~ ^[Yy]$ ]]; then
-  echo "Zastavuji kontejnery..."
-  docker stop homeassistant zigbee2mqtt mosquitto 2>/dev/null || true
-
-  echo "Mažu runtime stav..."
-  # Home Assistant: DB + restore_state (vytvoří se znova)
-  rm -f /home/vojrik/homeassistant/.storage/core.restore_state 2>/dev/null || true
-  rm -f /home/vojrik/homeassistant/home-assistant_v2.db* 2>/dev/null || true
-
-  # Zigbee2MQTT: state a cache (zařízení zůstanou v koordinátoru)
-  rm -f /home/vojrik/zigbee2mqtt/state.json /home/vojrik/zigbee2mqtt/log.log 2>/dev/null || true
-  rm -rf /home/vojrik/zigbee2mqtt/cache 2>/dev/null || true
-
-  echo "Startuji kontejnery zpět..."
-  docker start mosquitto zigbee2mqtt homeassistant 2>/dev/null || true
-fi
 
 # --- Krok 1: RAW image ---
 run dd if="$SRC_DEV" of="$IMG_PATH" bs=4M conv=fsync status=progress
