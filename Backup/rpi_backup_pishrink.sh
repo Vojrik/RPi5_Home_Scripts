@@ -40,6 +40,7 @@ require_tool lsblk
 require_tool findmnt
 require_tool awk
 require_tool blockdev
+require_tool docker
 require_tool pishrink.sh
 
 # --- Autodetekce zdrojového zařízení (pokud uživatel nezadal --src) ---
@@ -144,27 +145,49 @@ run() {
 echo "Log: $LOG_PATH"
 echo "Start: $(date -Is)" | tee -a "$LOG_PATH"
 
-# --- Čištění stavových souborů Home Assistant + Zigbee2MQTT (bezpečný snapshot) ---
-read -r -p "Promazat runtime stav (HA, Zigbee2MQTT) před zálohou? [y/N]: " cleandata || true
-if [[ "$cleandata" =~ ^[Yy]$ ]]; then
-  echo "Zastavuji kontejnery..."
-  docker stop homeassistant zigbee2mqtt mosquitto 2>/dev/null || true
+# --- Pozastavení Docker služeb (HA, Z2M, Mosquitto) pro konzistentní zálohu ---
+# Kontejnery, které budeme dočasně zastavovat pro backup
+DOCKER_CTRS=(homeassistant zigbee2mqtt mosquitto)
+declare -a RUNNING_BEFORE=()
 
-  echo "Mažu runtime stav..."
-  # Home Assistant: DB + restore_state (vytvoří se znova)
-  rm -f /home/vojrik/homeassistant/.storage/core.restore_state 2>/dev/null || true
-  rm -f /home/vojrik/homeassistant/home-assistant_v2.db* 2>/dev/null || true
+pause_services_for_backup() {
+  echo "Připravuji kontejnery pro zálohu (zastavení běžících): ${DOCKER_CTRS[*]}" | tee -a "$LOG_PATH"
+  if $DRY_RUN; then return 0; fi
+  # Seznam právě běžících kontejnerů
+  mapfile -t _running_now < <(docker ps --format '{{.Names}}' || true)
+  RUNNING_BEFORE=()
+  for c in "${DOCKER_CTRS[@]}"; do
+    if printf '%s\n' "${_running_now[@]}" | grep -xq -- "$c"; then
+      RUNNING_BEFORE+=("$c")
+    fi
+  done
+  if ((${#RUNNING_BEFORE[@]})); then
+    echo "Zastavuji: ${RUNNING_BEFORE[*]}" | tee -a "$LOG_PATH"
+    docker stop "${RUNNING_BEFORE[@]}" | tee -a "$LOG_PATH" || true
+  else
+    echo "Žádný z cílových kontejnerů neběží – není co zastavovat." | tee -a "$LOG_PATH"
+  fi
+}
 
-  # Zigbee2MQTT: state a cache (zařízení zůstanou v koordinátoru)
-  rm -f /home/vojrik/zigbee2mqtt/state.json /home/vojrik/zigbee2mqtt/log.log 2>/dev/null || true
-  rm -rf /home/vojrik/zigbee2mqtt/cache 2>/dev/null || true
+resume_services_after_backup() {
+  if $DRY_RUN; then return 0; fi
+  if ((${#RUNNING_BEFORE[@]})); then
+    echo "Spouštím zpět: ${RUNNING_BEFORE[*]}" | tee -a "$LOG_PATH"
+    docker start "${RUNNING_BEFORE[@]}" | tee -a "$LOG_PATH" || true
+  fi
+}
 
-  echo "Startuji kontejnery zpět..."
-  docker start mosquitto zigbee2mqtt homeassistant 2>/dev/null || true
-fi
+# Zajistí obnovení služeb i při chybě
+trap 'resume_services_after_backup' EXIT
+pause_services_for_backup
 
 # --- Krok 1: RAW image ---
 run dd if="$SRC_DEV" of="$IMG_PATH" bs=4M conv=fsync status=progress
+
+# Po vytvoření RAW image můžeme služby zase spustit
+resume_services_after_backup
+# rušíme EXIT trap, už jsme služby obnovili
+trap - EXIT
 
 # --- Krok 2: PiShrink ---
 run pishrink.sh -s "$IMG_PATH"
