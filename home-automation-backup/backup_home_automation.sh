@@ -3,7 +3,9 @@ set -euo pipefail
 
 # ---- Config ----
 BACKUP_DIR="/home/vojrik/Desktop/md0/_RPi5_Home_OS/Apps_Backups"
-HA_SRC="/opt/home-automation/homeassistant"
+# Skutečný config Home Assistant je bind mount /config -> /home/vojrik/homeassistant
+# (viz docker inspect homeassistant)
+HA_SRC="/home/vojrik/homeassistant"
 Z2M_SRC="/opt/home-automation/zigbee2mqtt/data"
 MQTT_USER="ha"
 MQTT_PASS_FILE="/opt/home-automation/credentials/mqtt_password.txt"
@@ -11,14 +13,68 @@ MQTT_PASS_FILE="/opt/home-automation/credentials/mqtt_password.txt"
 OCTOPRINT_BIN="/home/vojrik/OctoPrint/venv/bin/octoprint"
 OCTO_EXCLUDES=""   # nechává prázdné pro kompletní zálohu
 
+# Home Assistant API pro nativní "Backup" (pokud dostupné)
+HA_URL="http://127.0.0.1:8123"
+HA_TOKEN_FILE="/opt/home-automation/credentials/ha_long_lived_token.txt"
+HA_BACKUP_WAIT_SECS=300
+
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 DOCKER=/usr/bin/docker
 TAR=/bin/tar
 NICE=/usr/bin/nice
 IONICE=/usr/bin/ionice
+CURL=/usr/bin/curl
 
 # Ensure target directories exist
 mkdir -p "$BACKUP_DIR/homeassistant" "$BACKUP_DIR/zigbee2mqtt" "$BACKUP_DIR/octoprint"
+
+# ---- Pomocné funkce ----
+ha_trigger_backup_via_api() {
+  # Vyžaduje Home Assistant Backup integraci a lokálního agenta (nové verze HA).
+  # Pokud token nebo curl chybí, vrátí se s chybou.
+  local token payload name resp_code
+  [ -r "$HA_TOKEN_FILE" ] || return 1
+  [ -x "$CURL" ] || return 1
+
+  name="Auto backup ${TIMESTAMP}"
+  payload=$(printf '{"name":"%s"}' "$name")
+  resp_code=$($CURL -s -o /dev/null -w "%{http_code}" \
+    -H "Authorization: Bearer $(cat "$HA_TOKEN_FILE")" \
+    -H "Content-Type: application/json" \
+    -X POST "$HA_URL/api/services/backup/create" \
+    -d "$payload" || true)
+
+  # Očekávaný kód 200 / 201 (někdy 200)
+  if [ "$resp_code" != "200" ] && [ "$resp_code" != "201" ]; then
+    return 1
+  fi
+  return 0
+}
+
+ha_wait_and_collect_backup_file() {
+  # Po vyvolání backupu čekáme, až se v "$HA_SRC/backups" objeví nový soubor.
+  # Vrací cestu k nalezenému souboru na stdout, nebo 1.
+  local dir new_file deadline now
+  dir="$HA_SRC/backups"
+  [ -d "$dir" ] || return 1
+  deadline=$(( $(date +%s) + HA_BACKUP_WAIT_SECS ))
+  new_file=""
+  while :; do
+    # Nejnovější soubor v adresáři
+    new_file=$(ls -1t "$dir" 2>/dev/null | head -n1 || true)
+    if [ -n "$new_file" ]; then
+      # Ověříme stáří souboru, aby byl nově vytvořen
+      now=$(date +%s)
+      if [ $(( now - $(stat -c %Y "$dir/$new_file" 2>/dev/null || echo 0) )) -le 600 ]; then
+        echo "$dir/$new_file"
+        return 0
+      fi
+    fi
+    [ $(date +%s) -ge $deadline ] && break
+    sleep 2
+  done
+  return 1
+}
 
 # --- Zigbee2MQTT: trigger coordinator backup & archive data ---
 if [ -r "$MQTT_PASS_FILE" ]; then
@@ -31,9 +87,19 @@ fi
 Z2M_ARCHIVE="$BACKUP_DIR/zigbee2mqtt/zigbee2mqtt_${TIMESTAMP}.tar.gz"
 $NICE -n 10 $IONICE -c 3 $TAR -C "$Z2M_SRC" -czf "$Z2M_ARCHIVE" .
 
-# --- Home Assistant: archive config dir ---
-HA_ARCHIVE="$BACKUP_DIR/homeassistant/homeassistant_${TIMESTAMP}.tar.gz"
-$NICE -n 10 $IONICE -c 3 $TAR -C "$HA_SRC" -czf "$HA_ARCHIVE" .
+# --- Home Assistant: nativní Backup (pokud dostupný) + kompletní archiv configu ---
+# 1) pokus o nativní HA Backup přes API (obsahuje maximum, dle agentů)
+HA_NATIVE_BACKUP_COPIED=""
+if ha_trigger_backup_via_api; then
+  if NEWFILE=$(ha_wait_and_collect_backup_file); then
+    # Zkopírujeme vytvořený soubor do cíle (zachováme původní název)
+    cp -f "$NEWFILE" "$BACKUP_DIR/homeassistant/" && HA_NATIVE_BACKUP_COPIED="$BACKUP_DIR/homeassistant/$(basename "$NEWFILE")"
+  fi
+fi
+
+# 2) vždy vytvoříme i úplný archiv configu (zahrnuje logy, DB atd.)
+HA_CFG_ARCHIVE="$BACKUP_DIR/homeassistant/homeassistant_config_${TIMESTAMP}.tar.gz"
+$NICE -n 10 $IONICE -c 3 $TAR -C "$HA_SRC" -czf "$HA_CFG_ARCHIVE" .
 
 # --- OctoPrint: create backup via official backup command ---
 # Try to detect binary if configured path missing
