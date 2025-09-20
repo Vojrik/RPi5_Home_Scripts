@@ -13,9 +13,11 @@ NIGHT_END   = "08:00"
 
 IDLE_MIN_KHZ = 600_000
 IDLE_MAX_KHZ = 1_200_000
+IDLE_GOVERNOR = "powersave"
 
 PERF_MIN_KHZ = 800_000
 PERF_MAX_KHZ = 2_800_000
+PERF_GOVERNOR = "schedutil"
 
 LOW_LOAD_PCT         = 30
 LOW_LOAD_DURATION_S  = 600
@@ -34,6 +36,7 @@ CFG_FILE   = STATE_DIR/"config.json"
 MODE_FILE  = STATE_DIR/"mode"
 OVR_FILE   = STATE_DIR/"override_until"
 LAST_WRITTEN = {"gov": None, "min": None, "max": None, "fan": None}
+_AVAILABLE_GOVS = None
 
 def log(msg): print(time.strftime("%H:%M:%S"), msg, flush=True)
 
@@ -45,6 +48,17 @@ def _write_str(p: pathlib.Path, s: str):
     with open(p, "w") as f: f.write(str(s))
 
 def cpufreq_paths(name: str): return [cpu/"cpufreq"/name for cpu in CPUS]
+
+def available_governors():
+    global _AVAILABLE_GOVS
+    if _AVAILABLE_GOVS is None:
+        sample = CPUS[0]/"cpufreq"
+        govs_path = sample/"scaling_available_governors"
+        if govs_path.exists():
+            _AVAILABLE_GOVS = govs_path.read_text().strip().split()
+        else:
+            _AVAILABLE_GOVS = []
+    return _AVAILABLE_GOVS
 
 def available_freqs():
     sample = CPUS[0]/"cpufreq"
@@ -70,6 +84,10 @@ def set_governor(name: str):
         except: pass
 
 def ensure_governor(name: str):
+    govs = available_governors()
+    if name and govs and name not in govs:
+        log(f"WARNING: requested governor '{name}' not supported, keeping current")
+        return
     changed = False
     for p in cpufreq_paths("scaling_governor"):
         try:
@@ -152,6 +170,7 @@ DEFAULT_CFG = {
   "night_start": NIGHT_START, "night_end": NIGHT_END,
   "idle_min_khz": IDLE_MIN_KHZ, "idle_max_khz": IDLE_MAX_KHZ,
   "perf_min_khz": PERF_MIN_KHZ, "perf_max_khz": PERF_MAX_KHZ,
+  "idle_governor": IDLE_GOVERNOR, "perf_governor": PERF_GOVERNOR,
   "low_load_pct": LOW_LOAD_PCT, "low_load_duration_s": LOW_LOAD_DURATION_S,
   "high_load_pct": HIGH_LOAD_PCT, "high_load_duration_s": HIGH_LOAD_DURATION_S,
   "check_interval_s": CHECK_INTERVAL_S, "fan_mode_path": FAN_MODE_PATH,
@@ -182,11 +201,11 @@ def daemon_loop():
     # init: nastav profil podle dne/noci
     now0=datetime.datetime.now()
     if in_night(now0,cfg["night_start"],cfg["night_end"]):
-        ensure_governor("powersave")
+        ensure_governor(cfg["idle_governor"])
         enforce_min_max(cfg["idle_min_khz"],cfg["idle_max_khz"],"IDLE(init)")
         set_fan_mode("silent"); in_idle=True
     else:
-        ensure_governor("schedutil")
+        ensure_governor(cfg["perf_governor"])
         enforce_min_max(cfg["perf_min_khz"],cfg["perf_max_khz"],"PERF(init)")
         set_fan_mode("normal"); in_idle=False
 
@@ -198,40 +217,40 @@ def daemon_loop():
 
         # den/noc přepínač
         if last_is_night is True and is_night is False:
-            ensure_governor("schedutil")
+            ensure_governor(cfg["perf_governor"])
             enforce_min_max(cfg["perf_min_khz"],cfg["perf_max_khz"],"PERF(day-start)")
             set_fan_mode("normal"); in_idle=False; low_acc=high_acc=0
 
         if is_night and not override_active() and mode=="auto":
-            ensure_governor("powersave")
+            ensure_governor(cfg["idle_governor"])
             enforce_min_max(cfg["idle_min_khz"],cfg["idle_max_khz"],"IDLE(night)")
             set_fan_mode("silent"); in_idle=True; low_acc=high_acc=0; last_is_night=is_night
             time.sleep(cfg["check_interval_s"]); continue
 
         # režimy s explicitním vynucením
         if mode=="force-low":
-            ensure_governor("powersave")
+            ensure_governor(cfg["idle_governor"])
             enforce_min_max(cfg["idle_min_khz"],cfg["idle_max_khz"],"IDLE(force)")
             set_fan_mode("silent"); in_idle=True
             time.sleep(cfg["check_interval_s"]); last_is_night=is_night; continue
         if mode=="force-high":
-            ensure_governor("schedutil")
+            ensure_governor(cfg["perf_governor"])
             enforce_min_max(cfg["perf_min_khz"],cfg["perf_max_khz"],"PERF(force)")
             set_fan_mode("normal"); in_idle=False
             time.sleep(cfg["check_interval_s"]); last_is_night=is_night; continue
         # day-auto = ve dne auto, v noci držet výkon a neadaptovat na zátěž
         if mode=="day-auto" and is_night:
-            ensure_governor("schedutil")
+            ensure_governor(cfg["perf_governor"])
             enforce_min_max(cfg["perf_min_khz"],cfg["perf_max_khz"],"PERF(day-auto)")
             set_fan_mode("normal"); in_idle=False
             time.sleep(cfg["check_interval_s"]); last_is_night=is_night; continue
 
         # hlídání a re-enforce v auto režimu
         if in_idle:
-            ensure_governor("powersave")
+            ensure_governor(cfg["idle_governor"])
             enforce_min_max(cfg["idle_min_khz"],cfg["idle_max_khz"],"IDLE(enforce)")
         else:
-            ensure_governor("schedutil")
+            ensure_governor(cfg["perf_governor"])
             enforce_min_max(cfg["perf_min_khz"],cfg["perf_max_khz"],"PERF(enforce)")
 
         # adaptace podle zátěže (pouze ve dne nebo když přebije override noc)
@@ -241,7 +260,7 @@ def daemon_loop():
             if usage>=cfg["high_load_pct"]:
                 high_acc+=cfg["check_interval_s"]
                 if high_acc>=cfg["high_load_duration_s"]:
-                    ensure_governor("schedutil")
+                    ensure_governor(cfg["perf_governor"])
                     enforce_min_max(cfg["perf_min_khz"],cfg["perf_max_khz"],"PERF(switch)")
                     set_fan_mode("normal"); in_idle=False; high_acc=low_acc=0
             else: high_acc=0
@@ -249,7 +268,7 @@ def daemon_loop():
             if usage<=cfg["low_load_pct"]:
                 low_acc+=cfg["check_interval_s"]
                 if low_acc>=cfg["low_load_duration_s"]:
-                    ensure_governor("powersave")
+                    ensure_governor(cfg["idle_governor"])
                     enforce_min_max(cfg["idle_min_khz"],cfg["idle_max_khz"],"IDLE(switch)")
                     set_fan_mode("silent"); in_idle=True; low_acc=high_acc=0
             else: low_acc=0
@@ -263,13 +282,25 @@ def cmd_status():
     st={"mode":mode,"override":ov,"cur":_read_int(s/"scaling_cur_freq"),
         "min":_read_int(s/"scaling_min_freq"),"max":_read_int(s/"scaling_max_freq"),
         "gov": (CPUS[0]/"cpufreq"/"scaling_governor").read_text().strip(),
-        "avail":available_freqs(),"cfg":cfg}
+        "avail":available_freqs(),"avail_governors":available_governors(),"cfg":cfg}
     print(json.dumps(st,indent=2,sort_keys=True))
 
 def cmd_set(args):
     cfg=load_cfg()
     if args.night: s,e=args.night.split("-"); cfg["night_start"]=s; cfg["night_end"]=e
+    govs=available_governors()
+    if args.idle_governor is not None:
+        if govs and args.idle_governor not in govs:
+            print(f"Governor '{args.idle_governor}' není k dispozici: {govs}",file=sys.stderr)
+            sys.exit(1)
+        cfg["idle_governor"]=args.idle_governor
+    if args.perf_governor is not None:
+        if govs and args.perf_governor not in govs:
+            print(f"Governor '{args.perf_governor}' není k dispozici: {govs}",file=sys.stderr)
+            sys.exit(1)
+        cfg["perf_governor"]=args.perf_governor
     for k in ["idle_min_khz","idle_max_khz","perf_min_khz","perf_max_khz",
+              "idle_governor","perf_governor",
               "low_load_pct","low_load_duration_s","high_load_pct","high_load_duration_s",
               "check_interval_s"]:
         v=getattr(args,k,None); 
@@ -286,6 +317,7 @@ def main():
     pset=sub.add_parser("set"); pset.add_argument("--night"); 
     pset.add_argument("--idle-min-khz",type=int); pset.add_argument("--idle-max-khz",type=int)
     pset.add_argument("--perf-min-khz",type=int); pset.add_argument("--perf-max-khz",type=int)
+    pset.add_argument("--idle-governor",type=str); pset.add_argument("--perf-governor",type=str)
     pset.add_argument("--low-load-pct",type=float); pset.add_argument("--low-load-duration-s",type=int)
     pset.add_argument("--high-load-pct",type=float); pset.add_argument("--high-load-duration-s",type=int)
     pset.add_argument("--check-interval-s",type=float); pset.add_argument("--fan-path",type=str)
