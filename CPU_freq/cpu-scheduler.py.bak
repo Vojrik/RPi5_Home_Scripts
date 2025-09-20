@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Raspberry Pi CPU scheduler: time-of-day + load + fan_mode with a CLI (start/status/set/mode/override).
-Includes a fix that sets the correct profile on startup and keeps min/max enforced when they drift.
+RPi CPU scheduler v2: day/night switching plus load-based enforcement of governor and min/max limits
+Works with overclocking (arm_freq=2800 in /boot/firmware/config.txt): uses 'schedutil' during the day and 'powersave' when idle.
 """
 
-# ------------------------ DEFAULT CONFIGURATION ------------------------
+import time, datetime, pathlib, os, sys, argparse, json
 
+# -------- default configuration --------
 NIGHT_START = "22:00"
-NIGHT_END   = "07:00"
+NIGHT_END   = "08:00"
 
 IDLE_MIN_KHZ = 600_000
 IDLE_MAX_KHZ = 1_200_000
@@ -23,25 +24,22 @@ HIGH_LOAD_DURATION_S = 10
 
 CHECK_INTERVAL_S = 1.0
 FAN_MODE_PATH = "/run/fan_mode"
-
-# -------------------------------------------------------------
-
-import time, datetime, pathlib, os, sys, argparse, json
+# -------------------------------------
 
 CPUFREQ_BASE = pathlib.Path("/sys/devices/system/cpu")
 CPUS = [p for p in CPUFREQ_BASE.glob("cpu[0-9]*") if (p/"cpufreq").exists()]
 
-STATE_DIR = pathlib.Path("/var/lib/cpu-scheduler")
-STATE_DIR.mkdir(parents=True, exist_ok=True)
+STATE_DIR = pathlib.Path("/var/lib/cpu-scheduler"); STATE_DIR.mkdir(parents=True, exist_ok=True)
 CFG_FILE   = STATE_DIR/"config.json"
 MODE_FILE  = STATE_DIR/"mode"
 OVR_FILE   = STATE_DIR/"override_until"
+LAST_WRITTEN = {"gov": None, "min": None, "max": None, "fan": None}
 
 def log(msg): print(time.strftime("%H:%M:%S"), msg, flush=True)
 
 def _read_int(p: pathlib.Path):
     try: return int(p.read_text().strip())
-    except Exception: return None
+    except: return None
 
 def _write_str(p: pathlib.Path, s: str):
     with open(p, "w") as f: f.write(str(s))
@@ -56,32 +54,76 @@ def available_freqs():
         return sorted(set(vals))
     mn = _read_int(sample/"cpuinfo_min_freq")
     mx = _read_int(sample/"cpuinfo_max_freq")
-    return sorted([v for v in (mn, mx) if v])
+    return [v for v in (mn, mx) if v]
 
 def clamp_freq(khz: int):
     av = available_freqs()
-    if av: return max([f for f in av if f <= khz] or [min(av)])
-    sample = CPUS[0]/"cpufreq"
-    mn = _read_int(sample/"cpuinfo_min_freq") or khz
-    mx = _read_int(sample/"cpuinfo_max_freq") or khz
-    return min(max(khz, mn), mx)
+    if not av: return khz
+    av_sorted = sorted(set(av))
+    # choose the closest value <= requested, otherwise fall back to minimum
+    candidates = [f for f in av_sorted if f <= khz]
+    return candidates[-1] if candidates else av_sorted[0]
 
-def set_governor(name="schedutil"):
-    for p in cpufreq_paths("scaling_governor"): _write_str(p, name)
+def set_governor(name: str):
+    for p in cpufreq_paths("scaling_governor"):
+        try: _write_str(p, name)
+        except: pass
 
-def apply_profile(min_khz: int, max_khz: int, tag: str):
-    tmin = clamp_freq(min_khz); tmax = clamp_freq(max_khz)
+def ensure_governor(name: str):
+    changed = False
+    for p in cpufreq_paths("scaling_governor"):
+        try:
+            cur = p.read_text().strip()
+            if cur != name:
+                _write_str(p, name)
+                changed = True
+        except: pass
+    if changed or LAST_WRITTEN["gov"] != name:
+        log(f"GOVERNOR={name}")
+        LAST_WRITTEN["gov"] = name
+
+def enforce_min_max(min_khz: int, max_khz: int, tag: str):
+    tmin = clamp_freq(min_khz)
+    tmax = clamp_freq(max_khz)
     if tmin > tmax: tmin, tmax = tmax, tmin
+
+    # the Pi occasionally overwrites max -> enforce every time but log only on change
+    cur_min = _read_int(cpufreq_paths("scaling_min_freq")[0]) or 0
+    cur_max = _read_int(cpufreq_paths("scaling_max_freq")[0]) or 0
     for p in cpufreq_paths("scaling_min_freq"): _write_str(p, tmin)
     for p in cpufreq_paths("scaling_max_freq"): _write_str(p, tmax)
-    log(f"PROFILE={tag} min={tmin} max={tmax} kHz")
+
+    if LAST_WRITTEN["min"] != tmin or LAST_WRITTEN["max"] != tmax:
+        log(f"PROFILE={tag} min={tmin} max={tmax} kHz")
+        LAST_WRITTEN["min"], LAST_WRITTEN["max"] = tmin, tmax
+    else:
+        # if someone changed the limits externally, surface that information
+        if cur_min != tmin or cur_max != tmax:
+            log(f"NOTICE: external change detected (was min={cur_min} max={cur_max}), re-enforced to min={tmin} max={tmax}")
 
 def set_fan_mode(mode: str):
-    try:
-        with open(FAN_MODE_PATH, "w") as f: f.write(mode + "\n")
-        log(f"FAN_MODE={mode}")
-    except Exception as e:
-        log(f"FAN_MODE write failed: {e}")
+    # Log only when the value changes; silently re-enforce or log NOTICE when altered externally
+    prev = LAST_WRITTEN.get("fan")
+    if prev != mode:
+        try:
+            with open(FAN_MODE_PATH, "w") as f: f.write(mode + "\n")
+            log(f"FAN_MODE={mode}")
+        except Exception as e:
+            log(f"FAN_MODE write failed: {e}")
+        LAST_WRITTEN["fan"] = mode
+    else:
+        # Same desired state - verify that nobody overwrote the backing file
+        try:
+            cur = pathlib.Path(FAN_MODE_PATH).read_text().strip()
+            if cur != mode:
+                try:
+                    with open(FAN_MODE_PATH, "w") as f: f.write(mode + "\n")
+                    log(f"NOTICE: FAN_MODE external change detected (was '{cur}'), re-enforced to '{mode}'")
+                except Exception as e:
+                    log(f"FAN_MODE re-enforce failed: {e}")
+                LAST_WRITTEN["fan"] = mode
+        except Exception:
+            pass
 
 def cpu_usage_pct(interval: float):
     def snap():
@@ -106,7 +148,6 @@ def in_night(now, start_s, end_s):
     if end <= start: return now>=start or now<end
     return start<=now<end
 
-# ---------- config ----------
 DEFAULT_CFG = {
   "night_start": NIGHT_START, "night_end": NIGHT_END,
   "idle_min_khz": IDLE_MIN_KHZ, "idle_max_khz": IDLE_MAX_KHZ,
@@ -118,7 +159,9 @@ DEFAULT_CFG = {
 
 def load_cfg():
     if CFG_FILE.exists():
-        try: return {**DEFAULT_CFG, **json.loads(CFG_FILE.read_text())}
+        try: 
+            cfg = {**DEFAULT_CFG, **json.loads(CFG_FILE.read_text())}
+            return cfg
         except: pass
     return DEFAULT_CFG.copy()
 
@@ -132,68 +175,82 @@ def override_active():
     try: return time.time()<int(OVR_FILE.read_text().strip())
     except: return False
 
-# ---------- DAEMON LOOP ----------
 def daemon_loop():
     cfg=load_cfg(); global FAN_MODE_PATH; FAN_MODE_PATH=cfg["fan_mode_path"]
-    try: set_governor("schedutil")
-    except: pass
-
-    in_idle=False; low_acc=0; high_acc=0; last_is_night=None
     log("START daemon")
 
-    # INIT profil
+    # init: nastav profil podle dne/noci
     now0=datetime.datetime.now()
     if in_night(now0,cfg["night_start"],cfg["night_end"]):
-        apply_profile(cfg["idle_min_khz"],cfg["idle_max_khz"],"IDLE(init)")
+        ensure_governor("powersave")
+        enforce_min_max(cfg["idle_min_khz"],cfg["idle_max_khz"],"IDLE(init)")
         set_fan_mode("silent"); in_idle=True
     else:
-        apply_profile(cfg["perf_min_khz"],cfg["perf_max_khz"],"PERF(init)")
+        ensure_governor("schedutil")
+        enforce_min_max(cfg["perf_min_khz"],cfg["perf_max_khz"],"PERF(init)")
         set_fan_mode("normal"); in_idle=False
+
+    low_acc=0; high_acc=0; last_is_night=None
 
     while True:
         mode=get_mode(); now=datetime.datetime.now()
         is_night=in_night(now,cfg["night_start"],cfg["night_end"])
-        sample=CPUS[0]/"cpufreq"; cur_max=_read_int(sample/"scaling_max_freq")
 
-        if mode=="force-low":
-            apply_profile(cfg["idle_min_khz"],cfg["idle_max_khz"],"IDLE(force)")
-            set_fan_mode("silent"); time.sleep(cfg["check_interval_s"]); continue
-        if mode=="force-high":
-            apply_profile(cfg["perf_min_khz"],cfg["perf_max_khz"],"PERF(force)")
-            set_fan_mode("normal"); time.sleep(cfg["check_interval_s"]); continue
-
+        # Day/night switching
         if last_is_night is True and is_night is False:
-            apply_profile(cfg["perf_min_khz"],cfg["perf_max_khz"],"PERF(day-start)")
+            ensure_governor("schedutil")
+            enforce_min_max(cfg["perf_min_khz"],cfg["perf_max_khz"],"PERF(day-start)")
             set_fan_mode("normal"); in_idle=False; low_acc=high_acc=0
 
         if is_night and not override_active() and mode=="auto":
-            if cur_max!=clamp_freq(cfg["idle_max_khz"]):
-                apply_profile(cfg["idle_min_khz"],cfg["idle_max_khz"],"IDLE(night-fix)")
-                set_fan_mode("silent")
-            in_idle=True; low_acc=high_acc=0; last_is_night=is_night
+            ensure_governor("powersave")
+            enforce_min_max(cfg["idle_min_khz"],cfg["idle_max_khz"],"IDLE(night)")
+            set_fan_mode("silent"); in_idle=True; low_acc=high_acc=0; last_is_night=is_night
             time.sleep(cfg["check_interval_s"]); continue
 
-        # daytime logic
-        usage=cpu_usage_pct(cfg["check_interval_s"])
-        log(f"usage={usage:.1f}% in_idle={in_idle} mode={mode}")
+        # Modes with explicit enforcement
+        if mode=="force-low":
+            ensure_governor("powersave")
+            enforce_min_max(cfg["idle_min_khz"],cfg["idle_max_khz"],"IDLE(force)")
+            set_fan_mode("silent"); in_idle=True
+            time.sleep(cfg["check_interval_s"]); last_is_night=is_night; continue
+        if mode=="force-high":
+            ensure_governor("schedutil")
+            enforce_min_max(cfg["perf_min_khz"],cfg["perf_max_khz"],"PERF(force)")
+            set_fan_mode("normal"); in_idle=False
+            time.sleep(cfg["check_interval_s"]); last_is_night=is_night; continue
+        # day-auto = automatic switching during the day, force performance profile at night
+        if mode=="day-auto" and is_night:
+            ensure_governor("schedutil")
+            enforce_min_max(cfg["perf_min_khz"],cfg["perf_max_khz"],"PERF(day-auto)")
+            set_fan_mode("normal"); in_idle=False
+            time.sleep(cfg["check_interval_s"]); last_is_night=is_night; continue
 
-        want=clamp_freq(cfg["perf_max_khz"]) if not in_idle else clamp_freq(cfg["idle_max_khz"])
-        if cur_max!=want:
-            tag="PERF(fix)" if not in_idle else "IDLE(fix)"
-            apply_profile(cfg["perf_min_khz"],cfg["perf_max_khz"],tag) if not in_idle else apply_profile(cfg["idle_min_khz"],cfg["idle_max_khz"],tag)
+        # Guard and re-enforce limits in auto mode
+        if in_idle:
+            ensure_governor("powersave")
+            enforce_min_max(cfg["idle_min_khz"],cfg["idle_max_khz"],"IDLE(enforce)")
+        else:
+            ensure_governor("schedutil")
+            enforce_min_max(cfg["perf_min_khz"],cfg["perf_max_khz"],"PERF(enforce)")
+
+        # Load-based adaptation (daytime or when night auto mode is overridden)
+        usage=cpu_usage_pct(cfg["check_interval_s"])
 
         if in_idle:
             if usage>=cfg["high_load_pct"]:
                 high_acc+=cfg["check_interval_s"]
                 if high_acc>=cfg["high_load_duration_s"]:
-                    apply_profile(cfg["perf_min_khz"],cfg["perf_max_khz"],"PERF")
+                    ensure_governor("schedutil")
+                    enforce_min_max(cfg["perf_min_khz"],cfg["perf_max_khz"],"PERF(switch)")
                     set_fan_mode("normal"); in_idle=False; high_acc=low_acc=0
             else: high_acc=0
         else:
             if usage<=cfg["low_load_pct"]:
                 low_acc+=cfg["check_interval_s"]
                 if low_acc>=cfg["low_load_duration_s"]:
-                    apply_profile(cfg["idle_min_khz"],cfg["idle_max_khz"],"IDLE")
+                    ensure_governor("powersave")
+                    enforce_min_max(cfg["idle_min_khz"],cfg["idle_max_khz"],"IDLE(switch)")
                     set_fan_mode("silent"); in_idle=True; low_acc=high_acc=0
             else: low_acc=0
 
@@ -205,6 +262,7 @@ def cmd_status():
     s=CPUS[0]/"cpufreq"
     st={"mode":mode,"override":ov,"cur":_read_int(s/"scaling_cur_freq"),
         "min":_read_int(s/"scaling_min_freq"),"max":_read_int(s/"scaling_max_freq"),
+        "gov": (CPUS[0]/"cpufreq"/"scaling_governor").read_text().strip(),
         "avail":available_freqs(),"cfg":cfg}
     print(json.dumps(st,indent=2,sort_keys=True))
 
@@ -217,14 +275,12 @@ def cmd_set(args):
         v=getattr(args,k,None); 
         if v is not None: cfg[k]=v
     if args.fan_path: cfg["fan_mode_path"]=args.fan_path
-    save_cfg(cfg); print("OK")
+    CFG_FILE.write_text(json.dumps(cfg, indent=2,sort_keys=True)); print("OK")
 
 def cmd_mode(args):
     set_mode(args.mode); set_override(args.override or 0); print("OK")
 
 def main():
-    if os.geteuid()!=0: print("Run as root",file=sys.stderr); sys.exit(1)
-    if not CPUS: print("Nenalezeno cpufreq",file=sys.stderr); sys.exit(1)
     ap=argparse.ArgumentParser(); sub=ap.add_subparsers(dest="cmd",required=True)
     sub.add_parser("start"); sub.add_parser("status")
     pset=sub.add_parser("set"); pset.add_argument("--night"); 
@@ -236,6 +292,9 @@ def main():
     pmode=sub.add_parser("mode"); pmode.add_argument("mode",choices=["auto","day-auto","force-low","force-high"])
     pmode.add_argument("--override",type=int,default=0)
     args=ap.parse_args()
+    if args.cmd!="status" and os.geteuid()!=0:
+        print("Run as root (except for 'status')",file=sys.stderr); sys.exit(1)
+    if not CPUS: print("Nenalezeno cpufreq",file=sys.stderr); sys.exit(1)
     if args.cmd=="start": daemon_loop()
     elif args.cmd=="status": cmd_status()
     elif args.cmd=="set": cmd_set(args)

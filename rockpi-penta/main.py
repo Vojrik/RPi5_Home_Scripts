@@ -19,11 +19,11 @@ def main():
     lock = threading.Lock()
     oled.welcome()
     try:
-        # jen OLED; žádné klávesy ani fan
+        # Only the OLED; no keypad or fan logic
         while True:
             try:
-                oled.auto_slider(lock)   # když je slider.auto False, vrátí se hned
-                time.sleep(2)            # drž proces naživu
+                oled.auto_slider(lock)   # returns immediately when slider.auto is False
+                time.sleep(2)            # keep the process alive
             except Exception:
                 time.sleep(1)
     finally:

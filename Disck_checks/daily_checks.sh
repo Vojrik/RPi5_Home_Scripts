@@ -10,16 +10,15 @@ ts(){ date '+%F %T'; }
 
 echo "$(ts): Daily disk checks start" >> "$LOG"
 
-# 1) SMART denní kontrola (bez self-testu) – rychlá
+# 1) SMART daily check (without self-test) - quick
 nice -n 10 ionice -c3 \
   /home/vojrik/Scripts/Disck_checks/smart_daily.sh >> "$LOG" 2>&1 || true
 
-# 2) RAID watch – stav polí
+# 2) RAID watch - array state
 nice -n 10 ionice -c3 \
   /home/vojrik/Scripts/Disck_checks/raid_watch.sh >> "$LOG" 2>&1 || true
 
 echo "$(ts): Daily disk checks end" >> "$LOG"
 
-# Předat log uživateli
+# Pass the log to the user
 chown vojrik:vojrik "$LOG" 2>/dev/null || true
-

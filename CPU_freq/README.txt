@@ -1,38 +1,42 @@
-# spustit v popředí
-sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py start
+CPU Scheduler Quick Reference
+=============================
 
-# stav (lze i bez sudo)
-/home/vojrik/Scripts/CPU_freq/cpu-scheduler.py status
+Run in the foreground:
+    sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py start
 
-# režimy
-sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py mode auto
-sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py mode day-auto
-sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py mode force-low
-sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py mode force-high
-sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py mode auto --override 7200
+Status (sudo not required):
+    /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py status
 
-# změny konfigurace (set … uloží config, projeví se až po restartu služby)
-sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py set --night 22:00-07:00
-sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py set --idle-max-khz 1200000 --perf-max-khz 2800000
-sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py set --low-load-pct 30 --low-load-duration-s 600
-sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py set --high-load-pct 80 --high-load-duration-s 10
-sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py set --fan-path /run/fan_mode
+Available modes:
+    sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py mode auto
+    sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py mode day-auto
+    sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py mode force-low
+    sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py mode force-high
+    sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py mode auto --override 7200
 
-**Troubleshooting**
-- Stav a logy služby:
+Change configuration values (persisted by `set`; restart the service to apply):
+    sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py set --night 22:00-07:00
+    sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py set --idle-max-khz 1200000 --perf-max-khz 2800000
+    sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py set --low-load-pct 30 --low-load-duration-s 600
+    sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py set --high-load-pct 80 --high-load-duration-s 10
+    sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py set --fan-path /run/fan_mode
+
+Troubleshooting
+---------------
+- Service status and logs:
   - `systemctl status cpu-scheduler.service`
   - `journalctl -u cpu-scheduler.service -f`
-- Služba neběží po bootu:
-  - `systemctl is-enabled cpu-scheduler.service` musí vrátit `enabled`. Pokud ne: `sudo systemctl enable --now cpu-scheduler.service`.
-  - Po úpravě skriptu spustit `sudo systemctl daemon-reload` a `sudo systemctl restart cpu-scheduler.service`.
-- V noci je frekvence vysoko:
-  - Zkontroluj režim: `cat /var/lib/cpu-scheduler/mode` (např. `day-auto` v noci drží výkon; `force-high` vynucuje výkon).
-  - Ověř override: `cat /var/lib/cpu-scheduler/override_until` a čas porovnat s `date +%s`. Zrušení: `sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py mode auto --override 0`.
-  - Externí změny (jiný proces mění cpufreq): v logu uvidíš `NOTICE: external change detected …`, démon pak min/max znovu vynutí.
-- `set` změny se neprojevily:
-  - `set` jen uloží konfiguraci do `/var/lib/cpu-scheduler/config.json`. Je potřeba restart služby: `sudo systemctl restart cpu-scheduler.service`.
-- Kontrola cpufreq:
-  - Dostupné frekvence: `/home/vojrik/Scripts/CPU_freq/cpu-scheduler.py status` (pole `avail`).
-  - Aktuální guvernér/min/max: `status` ukazuje `gov`, `min`, `max` (čteno z `/sys/devices/system/cpu/.../cpufreq`).
-- Fan mode cesta:
-  - Pokud není `/run/fan_mode` zapisovatelné, nastav správnou cestu: `sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py set --fan-path /run/fan_mode` a restartuj službu.
+- Service does not start on boot:
+  - `systemctl is-enabled cpu-scheduler.service` should report `enabled`. If not, run `sudo systemctl enable --now cpu-scheduler.service`.
+  - After modifying the script execute `sudo systemctl daemon-reload` followed by `sudo systemctl restart cpu-scheduler.service`.
+- Night profile still runs at high frequency:
+  - Check the mode: `cat /var/lib/cpu-scheduler/mode` (e.g. `day-auto` keeps the performance profile at night; `force-high` enforces performance).
+  - Inspect overrides: `cat /var/lib/cpu-scheduler/override_until` and compare with `date +%s`. Clear with `sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py mode auto --override 0`.
+  - External cpufreq changes trigger `NOTICE: external change detected …` in the log; the daemon re-applies min/max afterwards.
+- `set` changes did not apply:
+  - `set` writes to `/var/lib/cpu-scheduler/config.json`. Restart the service: `sudo systemctl restart cpu-scheduler.service`.
+- cpufreq diagnostics:
+  - Available frequencies: `/home/vojrik/Scripts/CPU_freq/cpu-scheduler.py status` (field `avail`).
+  - Current governor/min/max: `status` shows `gov`, `min`, `max` (read from `/sys/devices/system/cpu/.../cpufreq`).
+- Fan mode path:
+  - If `/run/fan_mode` is not writable, set the correct path: `sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py set --fan-path /run/fan_mode` and restart the service.

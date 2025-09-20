@@ -15,12 +15,12 @@ from PIL import Image, ImageDraw, ImageFont
 
 import misc
 
-# --- Globální stav ---
+# --- Global state ---
 disp = None
 i2c = None
 _OLED_DISABLED = False
 _FAILS = 0
-_HARD_RESET_AFTER = 2  # při opakovaných výpadcích přejdi rychle na hard restart
+_HARD_RESET_AFTER = 2  # escalate to a hard restart after repeated failures
 
 # --- Fonty ---
 font = {
@@ -30,14 +30,14 @@ font = {
     '14': ImageFont.truetype('fonts/DejaVuSansMono-Bold.ttf', 14),
 }
 
-# --- I2C / OLED helpery odolné proti chybám ---
+# --- Fault-tolerant I2C / OLED helpers ---
 
 def _mk_i2c():
-    # zklidni linku snížením frekvence
+    # Calm the bus by lowering the frequency
     return busio.I2C(board.SCL, board.SDA, frequency=100_000)
 
 def _hard_i2c_restart():
-    # reload driverů pro případ zamrzlé linky
+    # Reload the drivers in case the bus is stuck
     cmds = [
         ["modprobe", "-r", "i2c_bcm2835"],
         ["modprobe", "-r", "i2c-dev"],
@@ -52,7 +52,7 @@ def _hard_i2c_restart():
     time.sleep(0.3)
 
 def disp_init():
-    """Inicializace OLED + I2C s vyčištěním předchozího stavu."""
+    """Initialise OLED and I2C while clearing any previous state."""
     global disp, i2c, _OLED_DISABLED
     try:
         if hasattr(disp, "poweroff"):
@@ -71,14 +71,14 @@ def disp_init():
 
     i2c = _mk_i2c()
 
-    # počkej na lock sběrnice
+    # Wait for the bus lock
     t0 = time.time()
     while not i2c.try_lock():
         if time.time() - t0 > 1.5:
             raise OSError("I2C busy")
         time.sleep(0.01)
     try:
-        # volitelně: i2c.scan()
+        # Optionally: i2c.scan()
         pass
     finally:
         i2c.unlock()
@@ -95,7 +95,7 @@ def recover_oled(hard=False):
     return disp_init()
 
 def safe_disp_call(fn, *args, **kwargs):
-    """Obal pro volání na SSD1306. Retry + re-init při Errno 121/110 a TimeoutError."""
+    """Wrapper for SSD1306 calls. Retries + re-init on Errno 121/110 and TimeoutError."""
     global _FAILS, _OLED_DISABLED
     delay = 0.05
     for attempt in range(1, 4):
@@ -136,7 +136,7 @@ def safe_disp_call(fn, *args, **kwargs):
     _OLED_DISABLED = True
     return None
 
-# --- Init plátna ---
+# --- Canvas initialisation ---
 try:
     disp = disp_init()
 except Exception:
@@ -146,7 +146,7 @@ except Exception:
 if disp is not None:
     image = Image.new('1', (disp.width, disp.height))
 else:
-    # fallback velikost, než se podaří reinit
+    # Use fallback dimensions until reinitialisation succeeds
     image = Image.new('1', (128, 32))
 draw = ImageDraw.Draw(image)
 

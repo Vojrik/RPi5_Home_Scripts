@@ -7,7 +7,7 @@ RECIPIENT="Vojta.Hamacek@seznam.cz"
 LOG_DIR_SYS="/var/log/Disck_checks"
 LOG_NAME="raid_watch.log"
 LOG_DIR_FALLBACK="$HOME/Disck_checks/logs"
-# Bezpečné nastavení logu s fallbackem do $HOME při nedostatku práv
+# Safe log configuration with fallback to $HOME when permissions are insufficient
 if mkdir -p "$LOG_DIR_SYS" 2>/dev/null && : > "$LOG_DIR_SYS/$LOG_NAME" 2>/dev/null; then
   LOG="$LOG_DIR_SYS/$LOG_NAME"
 else
@@ -21,11 +21,11 @@ host="$(hostname)"
 
 echo "$(ts): RAID watch start" >> "$LOG"
 
-# najdi md pole
+# Find md arrays
 mapfile -t arrays < <(awk '/^md[0-9]+/ {print $1}' /proc/mdstat)
 if (( ${#arrays[@]} == 0 )); then
-  echo "$(ts): žádná md pole nenalezena" >> "$LOG"
-  echo "[$(ts)] STATUS: OK – e-mail se neposílá" >> "$LOG"
+  echo "$(ts): no md arrays found" >> "$LOG"
+  echo "[$(ts)] STATUS: OK - email not sent" >> "$LOG"
   chown vojrik:vojrik "$LOG" 2>/dev/null || true
   ln -sfn "$LOG" "/home/vojrik/Desktop/$LOG_NAME" 2>/dev/null || true
   chown -h vojrik:vojrik "/home/vojrik/Desktop/$LOG_NAME" 2>/dev/null || true
@@ -42,7 +42,7 @@ for a in "${arrays[@]}"; do
   active_devices="$(grep -m1 'Active Devices :' <<<"$detail" | awk '{print $4+0}')"
   failed_devices="$(grep -m1 'Failed Devices :' <<<"$detail" | awk '{print $4+0}')"
 
-  # zkontroluj stavy členů
+  # Check member states
   bad_members=()
   for s in /sys/block/$a/md/dev-*/state; do
     [[ -r "$s" ]] || continue
@@ -54,7 +54,7 @@ for a in "${arrays[@]}"; do
   echo "$(ts): $a state='$state' raid=$raid_devices active=$active_devices failed=$failed_devices" >> "$LOG"
   echo "$detail" >> "$LOG"
 
-  # podmínky problému
+  # Problem conditions
   if grep -qi 'degraded' <<<"$state" \
      || (( failed_devices > 0 )) \
      || (( active_devices < raid_devices )) \
@@ -72,36 +72,36 @@ if (( ${#issues[@]} > 0 )); then
   {
     echo "From: Vojta.Hamacek@seznam.cz"
     echo "To: $RECIPIENT"
-    echo "Subject: [RAID ALERT] $host – problém detekován"
+    echo "Subject: [RAID ALERT] $host - problem detected"
     echo "Content-Type: text/plain; charset=UTF-8"
     echo
-    echo "Shrnutí:"
+    echo "Summary:"
     for i in "${issues[@]}"; do echo " - $i"; done
     echo
-    echo "Doporučení: pro postižené pole spusť 'echo repair > /sys/block/<mdX>/md/sync_action' a sleduj /proc/mdstat."
+    echo "Recommendation: for any affected array run 'echo repair > /sys/block/<mdX>/md/sync_action' and monitor /proc/mdstat."
     echo
-    echo "Poslední výpis mdadm --detail je v přiloženém logu na ploše ($LOG)."
+    echo "The latest mdadm --detail output is stored in the attached desktop log ($LOG)."
   } | msmtp -C /home/vojrik/Scripts/Disck_checks/.msmtprc -a default "$RECIPIENT" && sent_mail=true || true
   if $sent_mail; then
-    echo "$(ts): ALERT odeslán na $RECIPIENT" >> "$LOG"
+    echo "$(ts): ALERT sent to $RECIPIENT" >> "$LOG"
   else
-    echo "$(ts): pokus o odeslání e‑mailu selhal (zkontroluj msmtp)" >> "$LOG"
+    echo "$(ts): attempt to send email failed (check msmtp)" >> "$LOG"
   fi
 else
-  echo "$(ts): vše OK, e-mail se neposílá" >> "$LOG"
+  echo "$(ts): all OK, email not sent" >> "$LOG"
 fi
 
 chown vojrik:vojrik "$LOG" 2>/dev/null || true
 ln -sfn "$LOG" "/home/vojrik/Desktop/$LOG_NAME" 2>/dev/null || true
 chown -h vojrik:vojrik "/home/vojrik/Desktop/$LOG_NAME" 2>/dev/null || true
 
-# Jednoznačný závěrečný status v jednotném formátu
+# Clear final status in a consistent format
 if (( ${#issues[@]} > 0 )); then
   if $sent_mail; then
-    echo "[$(ts)] STATUS: ALERT – e‑mail odeslán" >> "$LOG"
+    echo "[$(ts)] STATUS: ALERT - email sent" >> "$LOG"
   else
-    echo "[$(ts)] STATUS: ALERT – e‑mail se NEpodařilo odeslat" >> "$LOG"
+    echo "[$(ts)] STATUS: ALERT - email failed to send" >> "$LOG"
   fi
 else
-  echo "[$(ts)] STATUS: OK – e‑mail se neposílá" >> "$LOG"
+  echo "[$(ts)] STATUS: OK - email not sent" >> "$LOG"
 fi

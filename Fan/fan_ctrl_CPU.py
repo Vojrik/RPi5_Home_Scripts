@@ -4,13 +4,13 @@
 import time
 import sys
 import os
-import fan_pwm  # náš modul s init_pwm, set_fan_speed, stop_pwm
+import fan_pwm  # our module with init_pwm, set_fan_speed, stop_pwm
 
-# === Nastavení ===
+# === Settings ===
 WAIT_TIME = 2
 FAN_MIN = 0
-PWM_FREQ = 20000  # Hz pro 3pin DC fan; pro 4pin PC fan dej 25000
-MODE_FILE = "/run/fan_mode"  # obsah: "normal" nebo "silent"
+PWM_FREQ = 20000  # Hz for 3-pin DC fans; use 25000 for 4-pin PC fans
+MODE_FILE = "/run/fan_mode"  # contents: "normal" or "silent"
 hyst = 1
 
 tempSteps = [40, 44.99, 45, 47, 50, 54.99, 55, 58, 61, 64, 67, 70]
@@ -22,7 +22,7 @@ profiles = {
     "silent": speedSteps_silent,
 }
 
-# === Stav ===
+# === State ===
 cpuTempOld = 0.0
 fanSpeedOld = 0.0
 firstRun = True
@@ -41,7 +41,7 @@ def interp_speed(t, temps, speeds):
         return speeds[0]
     if t >= temps[-1]:
         return speeds[-1]
-    # lineární interpolace mezi body
+    # Linear interpolation between each pair of points
     for i in range(len(temps) - 1):
         if temps[i] <= t < temps[i + 1]:
             return round(
@@ -55,26 +55,26 @@ def interp_speed(t, temps, speeds):
 
 # sanity check
 if len(speedSteps_normal) != len(tempSteps) or len(speedSteps_silent) != len(tempSteps):
-    print("Počet teplotních a rychlostních kroků se neshoduje!")
+    print("The number of temperature and speed steps does not match!")
     sys.exit(1)
 
 try:
     fan_pwm.init_pwm(freq_hz=PWM_FREQ)
 
     while True:
-        # režim zvenku
+        # Mode supplied from the outside world
         mode = read_mode()
         speeds = profiles[mode]
 
         if mode != last_mode:
-            print(f"Režim: {mode}")
+            print(f"Mode: {mode}")
             last_mode = mode
 
-        # teplota CPU
+        # CPU temperature
         with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
             cpuTemp = float(f.read()) / 1000.0
 
-        # výpočet rychlosti s hysterezí
+        # Compute fan speed with hysteresis
         if firstRun or abs(cpuTemp - cpuTempOld) > hyst:
             fanSpeed = interp_speed(cpuTemp, tempSteps, speeds)
 
@@ -94,7 +94,7 @@ except KeyboardInterrupt:
     fan_pwm.stop_pwm()
     sys.exit(0)
 except Exception as e:
-    # tvrdě ukončit PWM i při chybě
+    # Ensure the PWM controller is disabled even on errors
     try:
         fan_pwm.stop_pwm()
     finally:

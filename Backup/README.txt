@@ -1,10 +1,10 @@
-Navod pro tento skript
+Instructions for this script
 
-	Oprávnění ke spuštění: 
-		sudo chmod +x /home/vojrik/Scripts/Backup/rpi_backup_pishrink.sh
+Grant execute permission:
+    sudo chmod +x /home/vojrik/Scripts/Backup/rpi_backup_pishrink.sh
 
-	Simlink pro spouštění odkudkoliv: 
-		sudo ln -s /home/vojrik/Scripts/Backup/rpi_backup_pishrink.sh /usr/local/bin/rpi_backup_pishrink
+Create a symlink to run it from anywhere:
+    sudo ln -s /home/vojrik/Scripts/Backup/rpi_backup_pishrink.sh /usr/local/bin/rpi_backup_pishrink
 
-	Spustitelné pomocí: 
-		sudo rpi_backup_pishrink
+Run the backup:
+    sudo rpi_backup_pishrink

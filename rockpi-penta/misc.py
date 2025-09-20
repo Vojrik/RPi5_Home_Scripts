@@ -9,7 +9,7 @@ import traceback
 from configparser import ConfigParser
 from collections import defaultdict
 
-# ------ Příkazy pro info na OLED ------
+# ------ Commands used for OLED info ------
 cmds = {
     'blk': "lsblk | awk '{print $1}'",
     'up': "s=$(cut -d. -f1 /proc/uptime); d=$((s/86400)); h=$(((s%86400)/3600)); m=$(((s%3600)/60)); "
@@ -50,7 +50,7 @@ def read_conf():
         cfg = ConfigParser()
         cfg.read('/etc/rockpi-penta.conf')
 
-        # pouze to, co používá OLED
+        # Only load the pieces needed by the OLED module
         c['slider']['auto'] = cfg.getboolean('slider', 'auto')
         c['slider']['time'] = cfg.getfloat('slider', 'time')
         c['oled']['rotate'] = cfg.getboolean('oled', 'rotate')
@@ -63,13 +63,13 @@ def read_conf():
         c['oled']['f-temp'] = False
     return c
 
-# ------ Disk info (volitelné, pro případ jiné stránky) ------
+# ------ Disk info (optional, for alternate pages) ------
 def get_disk_info(cache={}):
     if not cache.get('time') or time.time() - cache['time'] > 30:
         info = {}
         cmd = "df -h | awk '$NF==\"/\"{printf \"%s\", $5}'"
         info['root'] = check_output(cmd)
-        # Přidat vlastní zařízení sem, pokud chceš víc než root:
+        # Add any additional devices here if you want more than the root filesystem:
         # for dev in ('md0','md1'): ...
         cache['info'] = list(zip(*info.items()))
         cache['time'] = time.time()
@@ -83,6 +83,6 @@ def slider_next(pages: dict):
 def slider_sleep():
     time.sleep(conf['slider']['time'])
 
-# ------ Globální config ------
+# ------ Global config ------
 conf = {'disk': [], 'idx': mp.Value('d', -1), 'run': mp.Value('d', 1)}
 conf.update(read_conf())

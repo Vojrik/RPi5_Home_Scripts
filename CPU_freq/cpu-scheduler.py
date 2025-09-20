@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-RPi CPU scheduler v2: den/noc + zátěž, tvrdé vynucování governor + min/max
-Funguje i s OC (arm_freq=2800 v /boot/firmware/config.txt): přes den schedutil, v klidu powersave.
+RPi CPU scheduler v2: day/night switching + load monitoring with hard enforcement of governor and min/max limits.
+Works with overclocking (arm_freq=2800 in /boot/firmware/config.txt): uses 'schedutil' during the day, 'powersave' when idle.
 """
 
 import time, datetime, pathlib, os, sys, argparse, json
 
-# -------- výchozí konfigurace --------
+# -------- default configuration --------
 NIGHT_START = "22:00"
 NIGHT_END   = "08:00"
 
@@ -74,7 +74,7 @@ def clamp_freq(khz: int):
     av = available_freqs()
     if not av: return khz
     av_sorted = sorted(set(av))
-    # vyber nejbližší <= požadované, jinak minimum
+    # choose the closest value <= requested, otherwise fall back to minimum
     candidates = [f for f in av_sorted if f <= khz]
     return candidates[-1] if candidates else av_sorted[0]
 
@@ -105,7 +105,7 @@ def enforce_min_max(min_khz: int, max_khz: int, tag: str):
     tmax = clamp_freq(max_khz)
     if tmin > tmax: tmin, tmax = tmax, tmin
 
-    # pi občas přepíše max -> přepišeme vždy, ale loguj jen při změně
+    # the Pi occasionally overwrites max -> enforce every time but log only on change
     cur_min = _read_int(cpufreq_paths("scaling_min_freq")[0]) or 0
     cur_max = _read_int(cpufreq_paths("scaling_max_freq")[0]) or 0
     for p in cpufreq_paths("scaling_min_freq"): _write_str(p, tmin)
@@ -115,12 +115,12 @@ def enforce_min_max(min_khz: int, max_khz: int, tag: str):
         log(f"PROFILE={tag} min={tmin} max={tmax} kHz")
         LAST_WRITTEN["min"], LAST_WRITTEN["max"] = tmin, tmax
     else:
-        # někdo přepsal limity? ukaž to
+        # if someone changed the limits externally, surface that information
         if cur_min != tmin or cur_max != tmax:
             log(f"NOTICE: external change detected (was min={cur_min} max={cur_max}), re-enforced to min={tmin} max={tmax}")
 
 def set_fan_mode(mode: str):
-    # Loguj jen při změně; při externí změně tiše re‑enforce nebo zaloguj NOTICE
+    # Log only when the value changes; silently re-enforce or log NOTICE when altered externally
     prev = LAST_WRITTEN.get("fan")
     if prev != mode:
         try:
@@ -130,7 +130,7 @@ def set_fan_mode(mode: str):
             log(f"FAN_MODE write failed: {e}")
         LAST_WRITTEN["fan"] = mode
     else:
-        # stejny pozadovany stav – zkontroluj, jestli nekdo neprepsal soubor
+        # Same desired state - verify that nobody overwrote the backing file
         try:
             cur = pathlib.Path(FAN_MODE_PATH).read_text().strip()
             if cur != mode:
@@ -215,7 +215,7 @@ def daemon_loop():
         mode=get_mode(); now=datetime.datetime.now()
         is_night=in_night(now,cfg["night_start"],cfg["night_end"])
 
-        # den/noc přepínač
+        # Day/night switching
         if last_is_night is True and is_night is False:
             ensure_governor(cfg["perf_governor"])
             enforce_min_max(cfg["perf_min_khz"],cfg["perf_max_khz"],"PERF(day-start)")
@@ -227,7 +227,7 @@ def daemon_loop():
             set_fan_mode("silent"); in_idle=True; low_acc=high_acc=0; last_is_night=is_night
             time.sleep(cfg["check_interval_s"]); continue
 
-        # režimy s explicitním vynucením
+        # Modes with explicit enforcement
         if mode=="force-low":
             ensure_governor(cfg["idle_governor"])
             enforce_min_max(cfg["idle_min_khz"],cfg["idle_max_khz"],"IDLE(force)")
@@ -238,14 +238,14 @@ def daemon_loop():
             enforce_min_max(cfg["perf_min_khz"],cfg["perf_max_khz"],"PERF(force)")
             set_fan_mode("normal"); in_idle=False
             time.sleep(cfg["check_interval_s"]); last_is_night=is_night; continue
-        # day-auto = ve dne auto, v noci držet výkon a neadaptovat na zátěž
+        # day-auto = automatic switching during the day, force performance profile at night
         if mode=="day-auto" and is_night:
             ensure_governor(cfg["perf_governor"])
             enforce_min_max(cfg["perf_min_khz"],cfg["perf_max_khz"],"PERF(day-auto)")
             set_fan_mode("normal"); in_idle=False
             time.sleep(cfg["check_interval_s"]); last_is_night=is_night; continue
 
-        # hlídání a re-enforce v auto režimu
+        # Guard and re-enforce limits in auto mode
         if in_idle:
             ensure_governor(cfg["idle_governor"])
             enforce_min_max(cfg["idle_min_khz"],cfg["idle_max_khz"],"IDLE(enforce)")
@@ -253,7 +253,7 @@ def daemon_loop():
             ensure_governor(cfg["perf_governor"])
             enforce_min_max(cfg["perf_min_khz"],cfg["perf_max_khz"],"PERF(enforce)")
 
-        # adaptace podle zátěže (pouze ve dne nebo když přebije override noc)
+        # Load-based adaptation (daytime or when night auto mode is overridden)
         usage=cpu_usage_pct(cfg["check_interval_s"])
 
         if in_idle:
@@ -291,12 +291,12 @@ def cmd_set(args):
     govs=available_governors()
     if args.idle_governor is not None:
         if govs and args.idle_governor not in govs:
-            print(f"Governor '{args.idle_governor}' není k dispozici: {govs}",file=sys.stderr)
+            print(f"Governor '{args.idle_governor}' is not available: {govs}",file=sys.stderr)
             sys.exit(1)
         cfg["idle_governor"]=args.idle_governor
     if args.perf_governor is not None:
         if govs and args.perf_governor not in govs:
-            print(f"Governor '{args.perf_governor}' není k dispozici: {govs}",file=sys.stderr)
+            print(f"Governor '{args.perf_governor}' is not available: {govs}",file=sys.stderr)
             sys.exit(1)
         cfg["perf_governor"]=args.perf_governor
     for k in ["idle_min_khz","idle_max_khz","perf_min_khz","perf_max_khz",
@@ -325,7 +325,7 @@ def main():
     pmode.add_argument("--override",type=int,default=0)
     args=ap.parse_args()
     if args.cmd!="status" and os.geteuid()!=0:
-        print("Spusť jako root (kromě 'status')",file=sys.stderr); sys.exit(1)
+        print("Run as root (except for 'status')",file=sys.stderr); sys.exit(1)
     if not CPUS: print("Nenalezeno cpufreq",file=sys.stderr); sys.exit(1)
     if args.cmd=="start": daemon_loop()
     elif args.cmd=="status": cmd_status()

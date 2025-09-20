@@ -8,7 +8,7 @@ RECIPIENT="Vojta.Hamacek@seznam.cz"
 LOG_DIR_SYS="/var/log/Disck_checks"
 LOG_NAME="smart_daily.log"
 LOG_DIR_FALLBACK="$HOME/Disck_checks/logs"
-# Bezpečné nastavení logu s fallbackem do $HOME při nedostatku práv
+# Safe log configuration with fallback to $HOME when permissions are insufficient
 if mkdir -p "$LOG_DIR_SYS" 2>/dev/null && : > "$LOG_DIR_SYS/$LOG_NAME" 2>/dev/null; then
   LOG="$LOG_DIR_SYS/$LOG_NAME"
 else
@@ -22,12 +22,12 @@ WAIT_FOR_COMPLETION=false
 ABORT_RUNNING=false
 DRY_RUN=false
 
-# Volby:
-#  -s|--short  ... spustí krátké self‑testy (ekvivalent RUN_SHORT_TEST=true)
-#  --long      ... spustí dlouhé/extended self‑testy (RUN_LONG_TEST=true)
-#  --dry-run   ... pouze loguje, nic nespouští
-#  --wait      ... pokud běží --short/--long, čeká na dokončení self-testů
-#  --abort-running ... ukončí právě běžící self-testy na všech nesystémových discích
+# Options:
+#  -s|--short  ... run short self-tests (sets RUN_SHORT_TEST=true)
+#  --long      ... run long/extended self-tests (sets RUN_LONG_TEST=true)
+#  --dry-run   ... only log actions, do not execute smartctl
+#  --wait      ... when --short/--long is used, wait for self-tests to finish
+#  --abort-running ... abort currently running self-tests on all non-system disks
 while (( "$#" )); do
   case "$1" in
     -s|--short)
@@ -51,7 +51,7 @@ while (( "$#" )); do
       shift
       ;;
     *)
-      echo "Neznámý argument: $1" >&2
+      echo "Unknown argument: $1" >&2
       exit 2
       ;;
   esac
@@ -63,7 +63,7 @@ DATE_ISO="$(date -Is)"
 : > "$LOG"
 log(){ echo "[$(date +%F\ %T)] $*" | tee -a "$LOG"; }
 
-# Stavové soubory pro sledování dlouho běžících self-testů
+# State files used to track long-running self-tests
 STATE_DIR_SYS="/var/lib/Disck_checks"
 STATE_DIR_FALLBACK="$HOME/.local/state/Disck_checks"
 if mkdir -p "$STATE_DIR_SYS" 2>/dev/null; then
@@ -73,12 +73,12 @@ else
   STATE_DIR="$STATE_DIR_FALLBACK"
 fi
 
-# Přeskočení krátkých testů v den dlouhých testů (první úterý v měsíci)
+# Skip short tests on the day long tests are scheduled (first Tuesday of the month)
 if $RUN_SHORT_TEST; then
   dow=$(date +%u)   # 1=Po .. 7=Ne
   dom=$(date +%d)   # 01-31
   if [[ "$dow" == "2" ]] && (( 10#$dom <= 7 )); then
-    log "Short self-test skip: první úterý v měsíci (v 18:30 běží dlouhý test)."
+    log "Short self-test skip: first Tuesday of the month (a long test runs at 18:30)."
     RUN_SHORT_TEST=false
   fi
 fi
@@ -89,9 +89,9 @@ ROOT_BLK="/dev/$(lsblk -no pkname "$ROOT_PART")"
 
 mapfile -t DISKS < <(lsblk -dpno NAME,TYPE | awk '$2=="disk"{print $1}' | grep -vE 'loop|zram' || true)
 
-# Volitelně: abort všech běžících self-testů a skončit
+# Optional: abort any running self-tests and exit
 if $ABORT_RUNNING; then
-  log "ABORT požadován – pokusím se ukončit běžící self-testy."
+  log "ABORT requested - attempting to stop running self-tests."
   for d in "${DISKS[@]}"; do
     [[ "$d" == "$ROOT_BLK" ]] && continue
     if [[ "$d" == /dev/nvme* ]]; then
@@ -114,8 +114,8 @@ if $ABORT_RUNNING; then
       fi
     fi
   done
-  log "ABORT dokončen."
-  # po abortu ukonči běh
+  log "ABORT completed."
+  # After aborting, terminate execution
   chown vojrik:vojrik "$LOG" 2>/dev/null || true
   ln -sfn "$LOG" "/home/vojrik/Desktop/$LOG_NAME" 2>/dev/null || true
   chown -h vojrik:vojrik "/home/vojrik/Desktop/$LOG_NAME" 2>/dev/null || true
@@ -141,11 +141,11 @@ echo >> "$LOG"
 
 fail=0
 declare -a ISSUES
-declare -a LIFE     # životní čítače k přehledu
+declare -a LIFE     # lifetime counters for the summary table
 
 for d in "${DISKS[@]}"; do
   if [[ "$d" == "$ROOT_BLK" ]]; then
-    log "SKIP systémový disk: $d"
+    log "SKIP system disk: $d"
     echo -e "==== $d ====\n(Skipped: system disk)\n" >> "$LOG"
     continue
   fi
@@ -170,22 +170,22 @@ for d in "${DISKS[@]}"; do
     out="$(cat "$tmp")"
     echo -e "==== $d ====\n$out\n" >> "$LOG"
 
-    # Zapiš i self-test log (pokud je k dispozici)
+    # Record the self-test log as well (when available)
     set +e; sudo smartctl -l selftest "$d" >"$tmp.st" 2>&1; set -e || true
     echo -e "---- SELF-TEST LOG ($d) ----\n$(cat "$tmp.st")\n" >> "$LOG"
 
-    # Krátký status + evidence běžících testů
+    # Short status + tracking of running tests
     status_line="$(sudo smartctl -a "$d" 2>/dev/null | grep -i 'Self-test' | head -n1 || true)"
     if grep -qi 'in progress' <<<"$status_line"; then
       echo "[$(date +%F\ %T)] $d Self-test status: $status_line" >> "$LOG"
-      # pokus o určení typu testu z logu
+      # Attempt to determine the test type from the log
       test_type="unknown"
       if grep -qi 'Extended' "$tmp.st"; then test_type="long"; fi
       if grep -qi 'Short' "$tmp.st"; then test_type="short"; fi
       sf="$STATE_DIR/selftest_$(basename "$d").state"
       now=$(date +%s)
       if [[ -f "$sf" ]]; then
-        # načti start
+        # Load stored start information
         start=$(awk -F= '/^start=/{print $2}' "$sf" 2>/dev/null || echo "$now")
         prev_type=$(awk -F= '/^type=/{print $2}' "$sf" 2>/dev/null || echo "$test_type")
         [[ -z "$start" ]] && start=$now
@@ -205,12 +205,12 @@ for d in "${DISKS[@]}"; do
         printf 'type=%s\nstart=%s\n' "$test_type" "$now" > "$sf" 2>/dev/null || true
       fi
     else
-      # není in-progress → smaž případný state
+      # Not in progress -> delete any existing state file
       sf="$STATE_DIR/selftest_$(basename "$d").state"
       rm -f "$sf" 2>/dev/null || true
     fi
 
-      # Volitelné čekání na dokončení self-testu
+      # Optional wait until the self-test finishes
       if $WAIT_FOR_COMPLETION && ( $RUN_LONG_TEST || $RUN_SHORT_TEST ); then
         log "Waiting for NVMe self-test to complete on $d ..."
         while :; do
@@ -223,16 +223,16 @@ for d in "${DISKS[@]}"; do
       fi
     fi
 
-    # ŽIVOTNÍ ČÍTAČE – NVMe
+    # LIFETIME COUNTERS - NVMe
     if $DRY_RUN; then
-      LIFE+=("$d: DRY RUN – NVMe")
+      LIFE+=("$d: DRY RUN - NVMe")
     else
       nvme_pcycles="$(grep -E 'Power Cycles' <<<"$out" | awk -F: '{gsub(/^[ \t]+/,"",$2); print $2}' | awk '{print $1}' | tail -1)"
       [[ -z "$nvme_pcycles" ]] && nvme_pcycles="N/A"
       LIFE+=("$d: Power Cycles=$nvme_pcycles; Load/Unload=N/A")
     fi
 
-    # Hodnocení stavu
+    # Health evaluation
     disk_issues=()
     if ! $DRY_RUN; then
       (( (rc & 2) != 0 )) && disk_issues+=("SMART health: predictive failure (rc&2)")
@@ -267,7 +267,7 @@ for d in "${DISKS[@]}"; do
       out="$(cat "$tmp")"
       echo -e "==== $d ====\n$out\n" >> "$LOG"
 
-      # Zapiš i self-test log (pokud je k dispozici)
+      # Record the self-test log as well (when available)
       set +e; sudo smartctl -d auto -l selftest "$d" >"$tmp.st" 2>&1; rcst=$?
       if (( rcst != 0 )); then
         sudo smartctl -d sat -l selftest "$d" >"$tmp.st" 2>&1 || true
@@ -275,14 +275,14 @@ for d in "${DISKS[@]}"; do
       set -e
       echo -e "---- SELF-TEST LOG ($d) ----\n$(cat "$tmp.st")\n" >> "$LOG"
 
-      # Krátký status: pokud běží self-test, zaloguj přehledovou větu
+      # Short status: if a self-test is running, log a summary line
       status_line="$(sudo smartctl -c -d auto "$d" 2>/dev/null | grep -i 'Self-test execution status' || true)"
       if [[ -z "$status_line" ]]; then
         status_line="$(sudo smartctl -c -d sat "$d" 2>/dev/null | grep -i 'Self-test execution status' || true)"
       fi
       if grep -qi 'in progress' <<<"$status_line"; then
         echo "[$(date +%F\ %T)] $d Self-test status: $status_line" >> "$LOG"
-        # pokus o určení typu testu ze self-test logu
+        # Attempt to determine the test type from the self-test log
         test_type="unknown"
         if grep -qi 'Extended' "$tmp.st"; then test_type="long"; fi
         if grep -qi 'Short' "$tmp.st"; then test_type="short"; fi
@@ -311,7 +311,7 @@ for d in "${DISKS[@]}"; do
         rm -f "$sf" 2>/dev/null || true
       fi
 
-      # Volitelné čekání na dokončení self-testu
+      # Optional wait until the self-test finishes
       if $WAIT_FOR_COMPLETION && ( $RUN_LONG_TEST || $RUN_SHORT_TEST ); then
         log "Waiting for SATA/USB self-test to complete on $d ..."
         while :; do
@@ -327,23 +327,23 @@ for d in "${DISKS[@]}"; do
       fi
     fi
 
-    # ŽIVOTNÍ ČÍTAČE – SATA
+    # LIFETIME COUNTERS - SATA
     if $DRY_RUN; then
-      LIFE+=("$d: DRY RUN – SATA/USB")
+      LIFE+=("$d: DRY RUN - SATA/USB")
     else
-      # Power_Cycle_Count (ID 12) / fallback podle názvu
+      # Power_Cycle_Count (ID 12) / fallback by name
       pcycles="$(awk '$1==12 || $2=="Power_Cycle_Count"{print $NF}' <<<"$out" | tail -1)"
       [[ -z "$pcycles" ]] && pcycles="N/A"
       # Load_Cycle_Count (ID 193) / fallback
       lcc="$(awk '$1==193 || $2=="Load_Cycle_Count"{print $NF}' <<<"$out" | tail -1)"
       [[ -z "$lcc" ]] && lcc="N/A"
-      # Start_Stop_Count (ID 4) – informativní
+      # Start_Stop_Count (ID 4) - informational
       ssc="$(awk '$1==4 || $2=="Start_Stop_Count"{print $NF}' <<<"$out" | tail -1)"
       [[ -n "$ssc" ]] && life_extra="; Start_Stop_Count=$ssc" || life_extra=""
       LIFE+=("$d: Power_Cycle_Count=$pcycles; Load_Cycle_Count=$lcc$life_extra")
     fi
 
-    # Hodnocení stavu
+    # Health evaluation
     disk_issues=()
     if ! $DRY_RUN; then
       (( (rc & 2) != 0 )) && disk_issues+=("SMART health: predictive failure (rc&2)")
@@ -360,7 +360,7 @@ for d in "${DISKS[@]}"; do
   rm -f "$tmp"
 done
 
-# ŽIVOTNÍ ČÍTAČE – vždy před SUMMARY
+# LIFETIME COUNTERS - always print before SUMMARY
 echo "---- LIFE COUNTS ----" >> "$LOG"
 for l in "${LIFE[@]}"; do echo "$l" >> "$LOG"; done
 echo >> "$LOG"
@@ -370,18 +370,18 @@ echo "---- SUMMARY ----" >> "$LOG"
 if (( fail )); then
   for i in "${ISSUES[@]}"; do echo "$i" >> "$LOG"; done
 else
-  echo "OK – žádné kritické indikátory." >> "$LOG"
+  echo "OK - no critical indicators." >> "$LOG"
 fi
 echo >> "$LOG"
 
 # MAIL
 sent_mail=false
 if (( fail )); then
-  log "STATUS: PROBLÉM – posílám e-mail"
+  log "STATUS: ALERT - sending email"
   {
     echo "From: Vojta.Hamacek@seznam.cz"
     echo "To: $RECIPIENT"
-    echo "Subject: [SMART ALERT] $HOST – problémy detekovány"
+    echo "Subject: [SMART ALERT] $HOST - issues detected"
     echo "Content-Type: text/plain; charset=UTF-8"
     echo
     echo "---- LIFE COUNTS ----"
@@ -395,21 +395,21 @@ if (( fail )); then
     cat "$LOG"
   } | msmtp -C /home/vojrik/Scripts/Disck_checks/.msmtprc -a default "$RECIPIENT" && sent_mail=true || true
 else
-  log "STATUS: OK – e-mail se neposílá"
+  log "STATUS: OK - email not sent"
 fi
 
-# Vlastnictví logu a symlink na plochu – vždy ukazuj na aktuální zdroj
+# Ensure the log ownership and desktop symlink always point to the current log file
 chown vojrik:vojrik "$LOG" 2>/dev/null || true
 ln -sfn "$LOG" "/home/vojrik/Desktop/$LOG_NAME" 2>/dev/null || true
 chown -h vojrik:vojrik "/home/vojrik/Desktop/$LOG_NAME" 2>/dev/null || true
 
-# Jednotný závěrečný status
+# Unified final status
 if (( fail )); then
   if $sent_mail; then
-    echo "[$(date +%F\ %T)] STATUS: ALERT – e‑mail odeslán" >> "$LOG"
+    echo "[$(date +%F\ %T)] STATUS: ALERT - email sent" >> "$LOG"
   else
-    echo "[$(date +%F\ %T)] STATUS: ALERT – e‑mail se NEpodařilo odeslat" >> "$LOG"
+    echo "[$(date +%F\ %T)] STATUS: ALERT - email failed to send" >> "$LOG"
   fi
 else
-  echo "[$(date +%F\ %T)] STATUS: OK – e‑mail se neposílá" >> "$LOG"
+  echo "[$(date +%F\ %T)] STATUS: OK - email not sent" >> "$LOG"
 fi

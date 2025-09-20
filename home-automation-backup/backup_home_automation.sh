@@ -3,17 +3,17 @@ set -euo pipefail
 
 # ---- Config ----
 BACKUP_DIR="/home/vojrik/Desktop/md0/_RPi5_Home_OS/Apps_Backups"
-# Skutečný config Home Assistant je bind mount /config -> /home/vojrik/homeassistant
-# (viz docker inspect homeassistant)
+# The real Home Assistant config lives in /home/vojrik/homeassistant (bind-mounted as /config)
+# see: docker inspect homeassistant
 HA_SRC="/home/vojrik/homeassistant"
 Z2M_SRC="/opt/home-automation/zigbee2mqtt/data"
 MQTT_USER="ha"
 MQTT_PASS_FILE="/opt/home-automation/credentials/mqtt_password.txt"
 # OctoPrint
 OCTOPRINT_BIN="/home/vojrik/OctoPrint/venv/bin/octoprint"
-OCTO_EXCLUDES=""   # nechává prázdné pro kompletní zálohu
+OCTO_EXCLUDES=""   # leave empty to include everything in the backup
 
-# Home Assistant API pro nativní "Backup" (pokud dostupné)
+# Home Assistant API for native "Backup" (if available)
 HA_URL="http://127.0.0.1:8123"
 HA_TOKEN_FILE="/opt/home-automation/credentials/ha_long_lived_token.txt"
 HA_BACKUP_WAIT_SECS=300
@@ -28,10 +28,10 @@ CURL=/usr/bin/curl
 # Ensure target directories exist
 mkdir -p "$BACKUP_DIR/homeassistant" "$BACKUP_DIR/zigbee2mqtt" "$BACKUP_DIR/octoprint"
 
-# ---- Pomocné funkce ----
+# ---- Helper functions ----
 ha_trigger_backup_via_api() {
-  # Vyžaduje Home Assistant Backup integraci a lokálního agenta (nové verze HA).
-  # Pokud token nebo curl chybí, vrátí se s chybou.
+  # Requires the Home Assistant Backup integration and local agent (recent HA versions).
+  # Returns with an error when the token or curl is missing.
   local token payload name resp_code
   [ -r "$HA_TOKEN_FILE" ] || return 1
   [ -x "$CURL" ] || return 1
@@ -44,7 +44,7 @@ ha_trigger_backup_via_api() {
     -X POST "$HA_URL/api/services/backup/create" \
     -d "$payload" || true)
 
-  # Očekávaný kód 200 / 201 (někdy 200)
+  # Expect HTTP 200 / 201 (sometimes 200)
   if [ "$resp_code" != "200" ] && [ "$resp_code" != "201" ]; then
     return 1
   fi
@@ -52,18 +52,18 @@ ha_trigger_backup_via_api() {
 }
 
 ha_wait_and_collect_backup_file() {
-  # Po vyvolání backupu čekáme, až se v "$HA_SRC/backups" objeví nový soubor.
-  # Vrací cestu k nalezenému souboru na stdout, nebo 1.
+  # After triggering the backup, wait until a new file appears in "$HA_SRC/backups".
+  # Prints the file path on stdout and returns 0, otherwise returns 1.
   local dir new_file deadline now
   dir="$HA_SRC/backups"
   [ -d "$dir" ] || return 1
   deadline=$(( $(date +%s) + HA_BACKUP_WAIT_SECS ))
   new_file=""
   while :; do
-    # Nejnovější soubor v adresáři
+    # Latest file in the directory
     new_file=$(ls -1t "$dir" 2>/dev/null | head -n1 || true)
     if [ -n "$new_file" ]; then
-      # Ověříme stáří souboru, aby byl nově vytvořen
+      # Ensure the file is recent so we do not pick an old backup
       now=$(date +%s)
       if [ $(( now - $(stat -c %Y "$dir/$new_file" 2>/dev/null || echo 0) )) -le 600 ]; then
         echo "$dir/$new_file"
@@ -87,17 +87,17 @@ fi
 Z2M_ARCHIVE="$BACKUP_DIR/zigbee2mqtt/zigbee2mqtt_${TIMESTAMP}.tar.gz"
 $NICE -n 10 $IONICE -c 3 $TAR -C "$Z2M_SRC" -czf "$Z2M_ARCHIVE" .
 
-# --- Home Assistant: nativní Backup (pokud dostupný) + kompletní archiv configu ---
-# 1) pokus o nativní HA Backup přes API (obsahuje maximum, dle agentů)
+# --- Home Assistant: native Backup (when available) + full config archive ---
+# 1) Try to trigger native HA Backup via API (captures everything exposed by agents)
 HA_NATIVE_BACKUP_COPIED=""
 if ha_trigger_backup_via_api; then
   if NEWFILE=$(ha_wait_and_collect_backup_file); then
-    # Zkopírujeme vytvořený soubor do cíle (zachováme původní název)
+    # Copy the generated file to the target directory (keep original name)
     cp -f "$NEWFILE" "$BACKUP_DIR/homeassistant/" && HA_NATIVE_BACKUP_COPIED="$BACKUP_DIR/homeassistant/$(basename "$NEWFILE")"
   fi
 fi
 
-# 2) vždy vytvoříme i úplný archiv configu (zahrnuje logy, DB atd.)
+# 2) Always create a full config archive (includes logs, database, etc.)
 HA_CFG_ARCHIVE="$BACKUP_DIR/homeassistant/homeassistant_config_${TIMESTAMP}.tar.gz"
 $NICE -n 10 $IONICE -c 3 $TAR -C "$HA_SRC" -czf "$HA_CFG_ARCHIVE" .
 
