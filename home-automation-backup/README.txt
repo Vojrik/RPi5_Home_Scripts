@@ -3,16 +3,16 @@ Home Assistant + Zigbee2MQTT + OctoPrint Backup
 
 Script: backup_home_automation.sh
 Location: /home/vojrik/Scripts/home-automation-backup/
-Schedule: daily at 16:00 (cron entry in /etc/cron.d/home_automation_backup)
+Schedule: daily at 19:01 (cron entry in /etc/cron.d/home_automation_backup)
 Backup target: /home/vojrik/Desktop/md0/_RPi5_Home_OS/Apps_Backups
 Retention: 30 most recent snapshots for each component (HA, Z2M, OctoPrint)
 Log file: /var/log/home_automation_backup.log
 
 What the script does
-- Zigbee2MQTT: triggers a coordinator backup through MQTT (topic zigbee2mqtt/bridge/request/backup), then archives the entire data directory (coordinator_backup.json, database.db, configuration) into a .tar.gz.
-- Home Assistant: archives the full configuration directory into a .tar.gz.
-- OctoPrint: runs the official `plugins backup:backup` command and stores the resulting .zip (settings, plugins, profiles, etc.).
-- Keeps only the newest 30 files per component subdirectory and removes older ones.
+- Zigbee2MQTT: triggers a coordinator backup through MQTT (topic zigbee2mqtt/bridge/request/backup), vytvoří konzistentní snapshot dat přes `rsync` do dočasného adresáře a z něj vyrobí .tar.gz archiv.
+- Home Assistant: nejprve zkusí přes API založit nativní HA Backup a nově vzniklý soubor zkopíruje do cílového adresáře; poté po ořezu starších nativních záloh vytvoří pomocí `rsync` neměnnou kopii celé konfigurace a z ní vytvoří .tar.gz.
+- OctoPrint: spustí oficiální příkaz `plugins backup:backup` a uloží výsledné .zip (nastavení, pluginy, profily atd.).
+- Po dokončení každého balíčku smaže snapshot z dočasného adresáře a v cíli drží pouze nejnovějších 30 souborů v každé podsložce.
 
 Target directory layout
 - .../Apps_Backups/
@@ -48,3 +48,4 @@ Script configuration hints
 Notes
 - The script expects the mosquitto and zigbee2mqtt containers to be running to trigger the coordinator backup; the archival steps themselves will still run without them.
 - Cron runs log progress to /var/log/home_automation_backup.log.
+- Dočasné snapshoty se ukládají do `/tmp` (pomocí `mktemp`) a jsou odstraněny po doběhnutí skriptu, takže archivování neprobíhá nad živými soubory.

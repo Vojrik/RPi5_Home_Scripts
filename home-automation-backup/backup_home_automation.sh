@@ -24,6 +24,37 @@ TAR=/bin/tar
 NICE=/usr/bin/nice
 IONICE=/usr/bin/ionice
 CURL=/usr/bin/curl
+RSYNC=/usr/bin/rsync
+MKDIR=/bin/mkdir
+RM=/bin/rm
+
+# Temporary staging directory for consistent snapshots
+STAGING_ROOT=""
+cleanup() {
+  if [ -n "${STAGING_ROOT:-}" ] && [ -d "$STAGING_ROOT" ]; then
+    $RM -rf -- "$STAGING_ROOT"
+  fi
+}
+trap cleanup EXIT
+
+create_stage_dir() {
+  if [ -z "${STAGING_ROOT}" ]; then
+    STAGING_ROOT=$(mktemp -d -t home_automation_backup.XXXXXX)
+  fi
+  $MKDIR -p -- "$STAGING_ROOT"
+}
+
+rsync_stage() {
+  # Usage: rsync_stage <source_dir> <target_dir> [extra rsync args...]
+  # Runs rsync twice to reduce churn between passes.
+  local src dest
+  src="$1"
+  dest="$2"
+  shift 2 || true
+  $MKDIR -p -- "$dest"
+  $RSYNC -a --delete "$@" "$src/" "$dest/"
+  $RSYNC -a --delete "$@" "$src/" "$dest/"
+}
 
 # Ensure target directories exist
 mkdir -p "$BACKUP_DIR/homeassistant" "$BACKUP_DIR/zigbee2mqtt" "$BACKUP_DIR/octoprint"
@@ -76,6 +107,27 @@ ha_wait_and_collect_backup_file() {
   return 1
 }
 
+ha_prune_native_backups() {
+  # Keep only the most recent native HA backup inside the config dir so
+  # the full-config tarball does not grow without bound.
+  local dir keep
+  dir="$HA_SRC/backups"
+  keep=1
+  [ -d "$dir" ] || return 0
+
+  local -a files=()
+  mapfile -d '' -t files < <(find "$dir" -maxdepth 1 -type f -printf '%T@ %p\0' 2>/dev/null \
+    | sort -z -n -r \
+    | cut -z -d' ' -f2-)
+
+  local total=${#files[@]}
+  if (( total > keep )); then
+    for ((i = keep; i < total; i++)); do
+      rm -f -- "${files[i]}" || echo "[WARN] Failed to prune old HA backup ${files[i]}" >&2
+    done
+  fi
+}
+
 # --- Zigbee2MQTT: trigger coordinator backup & archive data ---
 if [ -r "$MQTT_PASS_FILE" ]; then
   MQTT_PASS=$(cat "$MQTT_PASS_FILE")
@@ -84,22 +136,41 @@ if [ -r "$MQTT_PASS_FILE" ]; then
     sleep 2
   fi
 fi
+create_stage_dir
+Z2M_STAGE="$STAGING_ROOT/zigbee2mqtt"
+rsync_stage "$Z2M_SRC" "$Z2M_STAGE"
 Z2M_ARCHIVE="$BACKUP_DIR/zigbee2mqtt/zigbee2mqtt_${TIMESTAMP}.tar.gz"
-$NICE -n 10 $IONICE -c 3 $TAR -C "$Z2M_SRC" -czf "$Z2M_ARCHIVE" .
+$NICE -n 10 $IONICE -c 3 $TAR -C "$Z2M_STAGE" -czf "$Z2M_ARCHIVE" .
 
 # --- Home Assistant: native Backup (when available) + full config archive ---
 # 1) Try to trigger native HA Backup via API (captures everything exposed by agents)
 HA_NATIVE_BACKUP_COPIED=""
 if ha_trigger_backup_via_api; then
   if NEWFILE=$(ha_wait_and_collect_backup_file); then
-    # Copy the generated file to the target directory (keep original name)
-    cp -f "$NEWFILE" "$BACKUP_DIR/homeassistant/" && HA_NATIVE_BACKUP_COPIED="$BACKUP_DIR/homeassistant/$(basename "$NEWFILE")"
+    # Copy the generated file to the target directory s popisnějším názvem
+    bn=$(basename "$NEWFILE")
+    case "$bn" in
+      *.tar.gz) suffix=".tar.gz" ;;
+      *.tar.xz) suffix=".tar.xz" ;;
+      *.tar.bz2) suffix=".tar.bz2" ;;
+      *.tar.zst) suffix=".tar.zst" ;;
+      *.tar.lz4) suffix=".tar.lz4" ;;
+      *) suffix=".${bn##*.}" ;;
+    esac
+    new_dest="$BACKUP_DIR/homeassistant/Native_HA_backup_${TIMESTAMP}${suffix}"
+    cp -f "$NEWFILE" "$new_dest" && HA_NATIVE_BACKUP_COPIED="$new_dest"
   fi
 fi
 
+# Trim old native backups inside Home Assistant so the config archive stays compact
+ha_prune_native_backups
+
 # 2) Always create a full config archive (includes logs, database, etc.)
-HA_CFG_ARCHIVE="$BACKUP_DIR/homeassistant/homeassistant_config_${TIMESTAMP}.tar.gz"
-$NICE -n 10 $IONICE -c 3 $TAR -C "$HA_SRC" -czf "$HA_CFG_ARCHIVE" .
+create_stage_dir
+HA_STAGE="$STAGING_ROOT/homeassistant"
+rsync_stage "$HA_SRC" "$HA_STAGE"
+HA_CFG_ARCHIVE="$BACKUP_DIR/homeassistant/Custom_HA_config_${TIMESTAMP}.tar.gz"
+$NICE -n 10 $IONICE -c 3 $TAR -C "$HA_STAGE" -czf "$HA_CFG_ARCHIVE" .
 
 # --- OctoPrint: create backup via official backup command ---
 # Try to detect binary if configured path missing
