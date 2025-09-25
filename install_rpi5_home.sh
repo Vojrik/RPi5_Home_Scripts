@@ -22,6 +22,7 @@ This workflow can perform the following steps:
 EOM
 
 if prompt_yes_no "Run the base installation (steps 1-4)?" "Y"; then
+
   log "Starting base installation"
   "$MODULES_DIR/overclock.sh"
   "$MODULES_DIR/os_update.sh"
