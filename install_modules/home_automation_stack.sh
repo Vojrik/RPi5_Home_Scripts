@@ -7,7 +7,7 @@ log "Preparing Docker-based home automation stack"
 export DEBIAN_FRONTEND=noninteractive
 
 log "Installing Docker engine and dependencies"
-apt-get install -y docker.io mosquitto-clients curl
+apt-get install -y docker.io docker-compose-plugin mosquitto-clients curl
 
 if ! command -v docker >/dev/null 2>&1; then
   warn "docker.io package did not provide the docker binary; running get.docker.com installer"

@@ -5,20 +5,36 @@ source "$SCRIPT_DIR/lib.sh"
 
 log "Installing desktop and monitoring applications"
 export DEBIAN_FRONTEND=noninteractive
-apt-get install -y \
-  gnome-system-monitor \
-  git \
-  git-cola \
-  python3 \
-  idle3 \
-  s-tui \
-  htop \
-  stress \
-  terminator \
-  nodejs \
-  npm \
-  rsync \
+
+packages=(
+  gnome-system-monitor
+  git
+  git-cola
+  python3
+  idle3
+  s-tui
+  htop
+  stress
+  terminator
+  rsync
   mosquitto-clients
+)
+
+if command -v node >/dev/null 2>&1; then
+  log "Node.js already present; skipping apt install"
+else
+  packages+=(nodejs)
+fi
+
+if command -v npm >/dev/null 2>&1; then
+  log "npm already present; skipping apt install"
+elif dpkg-query -W -f='${Version}\n' nodejs 2>/dev/null | grep -q 'nodesource'; then
+  warn "NodeSource-provided nodejs detected; Debian npm package conflicts, skipping npm install"
+else
+  packages+=(npm)
+fi
+
+apt-get install -y "${packages[@]}"
 
 if command -v npm >/dev/null 2>&1; then
   log "Installing @openai/codex via npm"
