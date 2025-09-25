@@ -14,7 +14,7 @@ The script prompts for the target user, backup locations, and SMTP credentials. 
 
 ## What gets installed
 
-- `Backup/`: image-backup script exposed as `rpi_backup_pishrink` for shrinking SD/SSD clones.
+- `Backup/`: image-backup script exposed as `rpi_backup_pishrink` for shrinking SD/SSD clones (thanks to Drew Bonasera for [PiShrink](https://github.com/Drewsif/PiShrink); see `Backup/PiShrink_LICENSE`).
 - `CPU_freq/`: `cpu-scheduler` service that enforces day/night CPU frequencies and coordinates with the fan profile.
 - `Fan/`: `fanctrl` PWM daemon writing duty cycle to pin 19 and reacting to `/run/fan_mode`.
 - `Disck_checks/`: SMART + mdraid health monitors with msmtp e-mail alerts and cron schedules.
