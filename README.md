@@ -19,7 +19,7 @@ The script prompts for the target user, backup locations, and SMTP credentials. 
 - `Fan/`: `fanctrl` PWM daemon writing duty cycle to pin 19 and reacting to `/run/fan_mode`.
 - `Disck_checks/`: SMART + mdraid health monitors with msmtp e-mail alerts and cron schedules.
 - `home-automation-backup/`: daily backups of Home Assistant, Zigbee2MQTT, and OctoPrint into your chosen destination.
-- `rockpi-penta/`: OLED display app with its own Python virtual environment and systemd unit.
+- `rockpi-penta/`: OLED display app (customised from Radxa's [rockpi-penta](https://github.com/radxa/rockpi-penta); see `rockpi-penta/ROCKPi_Penta_LICENSE` and `rockpi-penta/README.md` for licence details and local changes).
 
 The installer also adjusts paths for the selected user, wires the services into systemd, and regenerates msmtp credentials so alerts are sent using the details you provide.
 
