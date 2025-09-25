@@ -1,0 +1,60 @@
+Chci, abys prošel instalační skript pro mé Raspberry Pi 5. Chtěl bych provést řadu změn (resp. neměň originální skript, zálohuj ho jako _OLD). Chci, aby skript uměl instalovat řadu věcí, ale uživatel si může zvolit jen dílčí části.
+Strukturu bych asi zvolil tak, že by vznikl nový instalační skript (ten starý prozatím ponechejme, využijeme ho později), který by následně spouštěl podřízené skripty podle voleb uživatele.
+Ideálně, aby po spuštění stručně vypsal, co provádí a vyžádal si následně potvrzení Y/n podle voleb, které si uživatel zvolí.  
+Vždy se nainstalují aplikace a provedou úpravy uvedené v tomto dokumentu (ale i ty musí potvrdit).
+
+1. detekuje verzi raspberry a podle toho ho přetaktuje
+2. provede aktualizaci OS
+3. nainstaluje všechny aplikace, které jsou v dokumentu uvedeny
+
+Toto se vykoná vždy po odsouhlasení uživatelem, seznam je zde:
+      
+      Aktualizace: 			sudo apt-get update
+      					sudo apt-get upgrade
+      sudo apt-get autoremove
+      
+      Přetaktování RPi 5 → do sudo nano /boot/firmware/config.txt přidat:		
+      # arm_freq=3000
+      # gpu_freq=1000
+      
+      nebo
+      arm_freq=2800
+      arm_freq_min=600
+      arm_boost=0
+      force_turbo=0
+      gpu_freq=970
+      
+      Přetaktování RPi 4 → do sudo nano /boot/firmware/config.txt přidat:	
+      # CPU overclock
+      over_voltage=4
+      arm_freq=2000
+      
+      # GPU overclock
+      gpu_freq=600
+      
+      Nainstalovat npm install -g @openai/codex
+      
+      Monitor CPU atd.: 		sudo apt-get install gnome-system-monitor	
+      Git:				sudo apt-get install git-cola
+      Python3 + IDLE: 		sudo apt install python3 idle3
+      … a lepší je pro sledování freq apod.:	sudo apt-get install s-tui  htop
+      sudo apt-get install stress
+      → spustí se pomocí: s-tui (vytvořit spustitelný soubor na ploše)	
+      
+      Lepší verze terminálu: 			apt install terminator
+
+4. z původního instalačního skriptu se použije část instalující 
+ - Backup (zde je můj vlastní skript, který využívá https://github.com/Drewsif/PiShrink ...prvně se tedy musí nainstalovat PiShrink z tohoto odkazu podle návodu, co tam je sepsán.)
+ - CPU_freq
+ - Fan
+
+5. Následně se skript dotáže:
+Volba pro uživatele ve smyslu "chcete používat Raspberry pro automatizovanou domácnost se Z2M, mosquitto a Home assistant? (s využitím Home Assistant Connect ZBT-1)"
+Zde vytvoř nový instalační skript (soubor), který se v případě odsouhlasení uživatelem zavolá. Nainstaluje v dockeru Z2M, mosquitto a Home assistant s ZBT-1, vše propojí, zprovozní a uživatele se aktivně zeptá na uživatelské jméno a heslo, které použije.
+
+6. Zde přijde na řadu původní instalační skript, ze kterého se použije část instalující (tato část bude ještě stále uvnitř toho nově vytvořeného souboru):
+ - home-automation-backup
+
+To je prozatím vše. Další volby přidáme později.
+
+
