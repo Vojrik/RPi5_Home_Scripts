@@ -88,7 +88,9 @@ ensure_target_context() {
 
   TARGET_HOME=$(getent passwd "$TARGET_USER" | cut -d: -f6)
   local default_scripts_dir="$TARGET_HOME/Scripts"
-  prompt_default TARGET_SCRIPTS_DIR "Kam se mají zkopírovat skripty z repozitáře?" "$default_scripts_dir"
+
+  prompt_default TARGET_SCRIPTS_DIR "Which directory should store the repository scripts?" "$default_scripts_dir"
+
   mkdir -p "$TARGET_SCRIPTS_DIR"
   export TARGET_USER TARGET_HOME TARGET_SCRIPTS_DIR
 }

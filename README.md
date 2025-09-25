@@ -1,16 +1,16 @@
 # Automated Installer for Raspberry Pi Scripts
 
-This directory ships with `install_all.sh`, a one-shot installer that prepares every helper script from [RPi5_Home_Scripts](https://github.com/Vojrik/RPi5_Home_Scripts) on a fresh Raspberry Pi.
+This directory ships with `install_rpi5_home.sh`, an interactive installer that prepares every helper script from [RPi5_Home_Scripts](https://github.com/Vojrik/RPi5_Home_Scripts) on a fresh Raspberry Pi. The previous monolithic script is still available as `install_all_OLD.sh` for reference.
 
 ## Quick start
 
 ```bash
-wget https://raw.githubusercontent.com/Vojrik/RPi5_Home_Scripts/main/install_all.sh -O install_all.sh
-chmod +x install_all.sh
-sudo ./install_all.sh
+wget https://raw.githubusercontent.com/Vojrik/RPi5_Home_Scripts/main/install_rpi5_home.sh -O install_rpi5_home.sh
+chmod +x install_rpi5_home.sh
+sudo ./install_rpi5_home.sh
 ```
 
-The script prompts for the target user, backup locations, and SMTP credentials. Run it with `sudo` on a machine that has internet access.
+The script describes the available modules, asks which ones to run, and then prompts for the target user, installation paths, and service credentials. Run it with `sudo` on a machine that has internet access.
 
 ## What gets installed
 

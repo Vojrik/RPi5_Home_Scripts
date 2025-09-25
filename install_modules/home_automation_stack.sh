@@ -5,10 +5,34 @@ source "$SCRIPT_DIR/lib.sh"
 
 log "Preparing Docker-based home automation stack"
 export DEBIAN_FRONTEND=noninteractive
-apt-get install -y docker.io docker-compose-plugin mosquitto-clients
+
+log "Installing Docker engine and dependencies"
+apt-get install -y docker.io docker-compose-plugin mosquitto-clients curl
+
+if ! command -v docker >/dev/null 2>&1; then
+  warn "docker.io package did not provide the docker binary; running get.docker.com installer"
+  curl -fsSL https://get.docker.com | sh
+fi
+
 
 ensure_command docker docker.io
 systemctl enable --now docker
+
+COMPOSE_CMD="docker compose"
+if ! docker compose version >/dev/null 2>&1; then
+  warn "docker compose plugin not found; attempting to install docker-compose-plugin package"
+  if apt-get install -y docker-compose-plugin; then
+    COMPOSE_CMD="docker compose"
+  else
+    warn "docker-compose-plugin package unavailable; falling back to docker-compose"
+    apt-get install -y docker-compose
+    if command -v docker-compose >/dev/null 2>&1; then
+      COMPOSE_CMD="docker-compose"
+    else
+      err "Neither docker compose plugin nor docker-compose binary is available."
+    fi
+  fi
+fi
 
 STACK_DIR_DEFAULT="/opt/home-automation"
 prompt_default STACK_DIR "Installation directory for the Docker stack" "$STACK_DIR_DEFAULT"
@@ -93,5 +117,5 @@ services:
       - TZ=$HA_TIMEZONE
 EOC
 
-log "Starting containers with docker compose"
-docker compose up -d
+log "Starting containers with $COMPOSE_CMD"
+$COMPOSE_CMD up -d
