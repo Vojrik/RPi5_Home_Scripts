@@ -1,2 +1,4 @@
 /Disck_checks/.gitignore
 git_token.txt
+__pycache__/
+*.pyc
