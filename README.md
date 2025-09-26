@@ -5,12 +5,13 @@ This directory ships with `install_rpi5_home.sh`, an interactive installer that 
 ## Quick start
 
 ```bash
-wget https://raw.githubusercontent.com/Vojrik/RPi5_Home_Scripts/main/install_rpi5_home.sh -O install_rpi5_home.sh
+git clone https://github.com/Vojrik/RPi5_Home_Scripts.git
+cd RPi5_Home_Scripts
 chmod +x install_rpi5_home.sh
 sudo ./install_rpi5_home.sh
 ```
 
-The script describes the available modules, asks which ones to run, and then prompts for the target user, installation paths, and service credentials. Run it with `sudo` on a machine that has internet access.
+The script describes the available modules, asks which ones to run, and then prompts for the target user, installation paths, and service credentials. Run it with `sudo` on a machine that has internet access. If `git` is not installed yet, add `sudo apt update && sudo apt install -y git` before the first command.
 
 ## What gets installed
 

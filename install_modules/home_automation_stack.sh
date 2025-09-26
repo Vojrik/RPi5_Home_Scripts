@@ -6,14 +6,78 @@ source "$SCRIPT_DIR/lib.sh"
 log "Preparing Docker-based home automation stack"
 export DEBIAN_FRONTEND=noninteractive
 
-log "Installing Docker engine and dependencies"
-apt-get install -y docker.io docker-compose-plugin mosquitto-clients curl
+log "Installing prerequisite packages for the home automation stack"
+if ! apt-get update; then
+  warn "apt-get update failed; continuing with existing package indexes"
+fi
+apt-get install -y ca-certificates curl gnupg mosquitto-clients
+
+install_docker_from_distro() {
+  log "Attempting to install Docker from distribution packages (docker.io)"
+  if apt-get install -y docker.io docker-compose-plugin; then
+    log "Docker installed from distribution repositories"
+    return 0
+  fi
+  warn "Failed to install docker.io package from distribution repositories"
+  return 1
+}
+
+setup_docker_repository() {
+  log "Configuring Docker APT repository"
+  install -m 0755 -d /etc/apt/keyrings
+  if ! curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; then
+    warn "Failed to download Docker GPG key"
+    return 1
+  fi
+  chmod a+r /etc/apt/keyrings/docker.gpg
+  local codename architecture repo_file
+  architecture=$(dpkg --print-architecture)
+  codename=$(awk -F= '$1=="VERSION_CODENAME"{print $2}' /etc/os-release)
+  if [[ -z "$codename" ]]; then
+    warn "Unable to detect Debian codename; skipping Docker repository configuration"
+    return 1
+  fi
+  repo_file="/etc/apt/sources.list.d/docker.list"
+  echo "deb [arch=${architecture} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian ${codename} stable" > "$repo_file"
+  if ! apt-get update; then
+    warn "apt-get update failed after adding Docker repository"
+    rm -f "$repo_file" /etc/apt/keyrings/docker.gpg
+    return 1
+  fi
+  return 0
+}
+
+install_docker_from_official_repo() {
+  log "Attempting to install Docker from Docker's official APT repository"
+  if setup_docker_repository && apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+    log "Docker installed from Docker's official repository"
+    return 0
+  fi
+  warn "Failed to install Docker from Docker's official repository"
+  return 1
+}
+
+install_docker_offline() {
+  local offline_dir="$SCRIPT_DIR/offline"
+  log "Looking for offline Docker installer in ${offline_dir}"
+  local installer="${offline_dir}/docker-install.sh"
+  if [[ -x "$installer" ]]; then
+    "$installer"
+    log "Docker installed using offline installer"
+    return 0
+  fi
+  warn "Offline installer script not found at ${installer}"
+  return 1
+}
 
 if ! command -v docker >/dev/null 2>&1; then
-  warn "docker.io package did not provide the docker binary; running get.docker.com installer"
-  curl -fsSL https://get.docker.com | sh
+  install_docker_from_distro || install_docker_from_official_repo || install_docker_offline || {
+    err "Docker engine installation failed; please install Docker manually and re-run the installer"
+    exit 1
+  }
+else
+  log "Docker binary already present; skipping engine installation"
 fi
-
 
 ensure_command docker docker.io
 systemctl enable --now docker
