@@ -7,8 +7,11 @@ log "Preparing Docker-based home automation stack"
 export DEBIAN_FRONTEND=noninteractive
 
 log "Installing prerequisite packages for the home automation stack"
-if ! apt-get install -y mosquitto-clients curl; then
-  warn "Failed to install some prerequisite packages (mosquitto-clients, curl)"
+if ! apt-get update; then
+  warn "apt-get update failed; continuing with existing package indexes"
+fi
+if ! apt-get install -y ca-certificates curl gnupg mosquitto-clients; then
+  warn "Failed to install some prerequisite packages (ca-certificates, curl, gnupg, mosquitto-clients)"
 fi
 
 docker_install_method=""
@@ -42,6 +45,7 @@ install_docker_from_docker_repo() {
 
   local keyring_dir="/etc/apt/keyrings"
   local keyring_file="$keyring_dir/docker.gpg"
+  local repo_file="/etc/apt/sources.list.d/docker.list"
 
   install -m 0755 -d "$keyring_dir"
   if ! curl -fsSL https://download.docker.com/linux/debian/gpg -o "$keyring_file"; then
@@ -53,12 +57,13 @@ install_docker_from_docker_repo() {
   local codename="$(. /etc/os-release && echo "$VERSION_CODENAME")"
   local arch="$(dpkg --print-architecture)"
 
-  cat > /etc/apt/sources.list.d/docker.list <<-EOF
+  cat > "$repo_file" <<-EOF
 deb [arch=$arch signed-by=$keyring_file] https://download.docker.com/linux/debian $codename stable
 EOF
 
   if ! apt-get update; then
     warn "apt-get update failed after adding Docker repository"
+    rm -f "$repo_file" "$keyring_file"
     return 1
   fi
 
