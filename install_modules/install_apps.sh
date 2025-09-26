@@ -37,10 +37,12 @@ fi
 apt-get install -y "${packages[@]}"
 
 if command -v npm >/dev/null 2>&1; then
-  log "Installing @openai/codex via npm"
-  npm install -g @openai/codex
+  log "Installing optional @openai/codex via npm"
+  if ! npm install -g @openai/codex; then
+    warn "@openai/codex installation failed; continuing without optional package"
+  fi
 else
-  warn "npm is not available; skipping installation of @openai/codex"
+  warn "npm is not available; skipping installation of optional @openai/codex package"
 fi
 
 if [[ ! -d /opt/pishrink ]]; then
