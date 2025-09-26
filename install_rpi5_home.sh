@@ -5,6 +5,20 @@ MODULES_DIR="$SCRIPT_DIR/install_modules"
 REPO_ROOT="$SCRIPT_DIR"
 export REPO_ROOT
 
+if [[ ! -d "$MODULES_DIR" ]] || [[ ! -f "$MODULES_DIR/lib.sh" ]]; then
+  cat <<'EOM' >&2
+Error: Required installer modules were not found next to install_rpi5_home.sh.
+
+Download the entire repository before running this script, for example:
+  git clone https://github.com/Vojrik/RPi5_Home_Scripts.git
+  cd RPi5_Home_Scripts
+  sudo ./install_rpi5_home.sh
+
+Alternatively, copy the install_modules directory so it sits beside this script.
+EOM
+  exit 1
+fi
+
 source "$MODULES_DIR/lib.sh"
 require_root
 
