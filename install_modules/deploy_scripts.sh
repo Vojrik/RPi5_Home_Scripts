@@ -15,9 +15,36 @@ sync_tree() {
   if command -v rsync >/dev/null 2>&1; then
     rsync -a --delete "$src/" "$dest/"
   else
-    rm -rf "$dest"
-    mkdir -p "$dest"
-    cp -a "$src/." "$dest/"
+    local dest_parent backup tmp
+    dest_parent=$(dirname "$dest")
+    mkdir -p "$dest_parent"
+
+    tmp=$(mktemp -d "${dest_parent}/.sync_tree_tmp.XXXXXX")
+    if ! cp -a "$src/." "$tmp/"; then
+      rm -rf "$tmp"
+      return 1
+    fi
+
+    if [[ -e "$dest" ]]; then
+      backup="${dest}.backup.$(date +%s).$$"
+      if ! mv "$dest" "$backup"; then
+        rm -rf "$tmp"
+        return 1
+      fi
+
+      if mv "$tmp" "$dest"; then
+        rm -rf "$backup"
+      else
+        mv "$backup" "$dest"
+        rm -rf "$tmp"
+        return 1
+      fi
+    else
+      if ! mv "$tmp" "$dest"; then
+        rm -rf "$tmp"
+        return 1
+      fi
+    fi
   fi
 }
 
