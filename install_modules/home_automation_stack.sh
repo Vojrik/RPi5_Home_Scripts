@@ -6,14 +6,133 @@ source "$SCRIPT_DIR/lib.sh"
 log "Preparing Docker-based home automation stack"
 export DEBIAN_FRONTEND=noninteractive
 
-log "Installing Docker engine and dependencies"
-apt-get install -y docker.io docker-compose-plugin mosquitto-clients curl
-
-if ! command -v docker >/dev/null 2>&1; then
-  warn "docker.io package did not provide the docker binary; running get.docker.com installer"
-  curl -fsSL https://get.docker.com | sh
+log "Installing prerequisite packages for the home automation stack"
+if ! apt-get install -y mosquitto-clients curl; then
+  warn "Failed to install some prerequisite packages (mosquitto-clients, curl)"
 fi
 
+docker_install_method=""
+
+install_docker_from_distribution() {
+  log "Attempting to install Docker from distribution packages (docker.io)"
+  if apt-get install -y docker.io docker-compose-plugin; then
+    if command -v docker >/dev/null 2>&1; then
+      docker_install_method="debian-docker.io"
+      return 0
+    fi
+    warn "docker.io package installed but docker binary still missing"
+  else
+    warn "Failed to install docker.io package from distribution repositories"
+  fi
+  return 1
+}
+
+install_docker_from_docker_repo() {
+  log "Attempting to install Docker from Docker's official APT repository"
+  if ! command -v curl >/dev/null 2>&1; then
+    warn "curl command unavailable; skipping Docker repository installation path"
+    return 1
+  fi
+  if ! command -v gpg >/dev/null 2>&1; then
+    if ! apt-get install -y gnupg >/dev/null; then
+      warn "Failed to install gnupg package required for Docker repository trust"
+      return 1
+    fi
+  fi
+
+  local keyring_dir="/etc/apt/keyrings"
+  local keyring_file="$keyring_dir/docker.gpg"
+
+  install -m 0755 -d "$keyring_dir"
+  if ! curl -fsSL https://download.docker.com/linux/debian/gpg -o "$keyring_file"; then
+    warn "Failed to download Docker GPG key"
+    return 1
+  fi
+  chmod a+r "$keyring_file"
+
+  local codename="$(. /etc/os-release && echo "$VERSION_CODENAME")"
+  local arch="$(dpkg --print-architecture)"
+
+  cat > /etc/apt/sources.list.d/docker.list <<-EOF
+deb [arch=$arch signed-by=$keyring_file] https://download.docker.com/linux/debian $codename stable
+EOF
+
+  if ! apt-get update; then
+    warn "apt-get update failed after adding Docker repository"
+    return 1
+  fi
+
+  if apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+    if command -v docker >/dev/null 2>&1; then
+      docker_install_method="docker-official-repo"
+      return 0
+    fi
+    warn "Docker official packages installed but docker binary still missing"
+  else
+    warn "Failed to install Docker packages from Docker repository"
+  fi
+  return 1
+}
+
+run_offline_docker_installer() {
+  local offline_dir="${OFFLINE_DOCKER_INSTALLER_DIR:-$SCRIPT_DIR/offline}"
+  local installer="$offline_dir/docker-install.sh"
+  local checksum_file="$installer.sha256"
+
+  log "Looking for offline Docker installer in $offline_dir"
+
+  if ! command -v sha256sum >/dev/null 2>&1; then
+    warn "sha256sum command unavailable; cannot verify offline installer integrity"
+    return 1
+  fi
+
+  if [[ ! -f "$installer" ]]; then
+    warn "Offline installer script not found at $installer"
+    return 1
+  fi
+  if [[ ! -f "$checksum_file" ]]; then
+    warn "Checksum file not found for offline installer ($checksum_file)"
+    return 1
+  fi
+  if ! sha256sum --status -c "$checksum_file"; then
+    warn "Checksum verification failed for offline installer"
+    return 1
+  fi
+
+  log "Running verified offline Docker installer"
+  if bash "$installer"; then
+    if command -v docker >/dev/null 2>&1; then
+      docker_install_method="offline-installer"
+      return 0
+    fi
+    warn "Offline installer completed but docker binary still missing"
+  else
+    warn "Offline Docker installer failed"
+  fi
+  return 1
+}
+
+if command -v docker >/dev/null 2>&1; then
+  docker_install_method="preinstalled"
+  log "Docker already present at $(command -v docker); skipping installation"
+else
+  install_docker_from_distribution || true
+
+  if [[ -z "$docker_install_method" ]]; then
+    install_docker_from_docker_repo || true
+  fi
+
+  if [[ -z "$docker_install_method" ]]; then
+    run_offline_docker_installer || true
+  fi
+fi
+
+if [[ -z "$docker_install_method" ]]; then
+  err "Docker engine installation failed; please install Docker manually and re-run the installer"
+  exit 1
+fi
+
+log "Docker installation path selected: $docker_install_method"
 
 ensure_command docker docker.io
 systemctl enable --now docker
