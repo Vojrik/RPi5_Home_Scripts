@@ -48,8 +48,8 @@ if [[ ! -f "$CONFIG_FILE" ]]; then
 fi
 
 if grep -q "RPi Home Installer Overclock" "$CONFIG_FILE"; then
-  warn "An RPi Home Installer overclock block already exists; leaving unchanged"
-  exit 0
+  log "Removing existing RPi Home Installer overclock block from $CONFIG_FILE"
+  perl -0pi -e 's/\n?# --- RPi Home Installer Overclock.*?# --- End RPi Home Installer Overclock ---\n?/\n/sg' "$CONFIG_FILE"
 fi
 
 log "Appending overclock configuration to $CONFIG_FILE"
