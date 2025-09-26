@@ -158,6 +158,21 @@ prompt_default STACK_DIR "Installation directory for the Docker stack" "$STACK_D
 mkdir -p "$STACK_DIR"
 cd "$STACK_DIR"
 
+DOCKER_AVAILABLE=true
+if ! docker info >/dev/null 2>&1; then
+  DOCKER_AVAILABLE=false
+fi
+
+STACK_WAS_RUNNING=false
+if [[ -f docker-compose.yml ]]; then
+  if [[ "$DOCKER_AVAILABLE" == true ]]; then
+    EXISTING_SERVICES="$($COMPOSE_CMD ps --services 2>/dev/null || true)"
+    if [[ -n "$EXISTING_SERVICES" ]]; then
+      STACK_WAS_RUNNING=true
+    fi
+  fi
+fi
+
 prompt_default ZIGBEE_ADAPTER "Path to Zigbee adapter (ZBT-1) device" "/dev/ttyACM0"
 prompt_required MQTT_USERNAME "MQTT username"
 prompt_secret MQTT_PASSWORD "MQTT password"
@@ -236,5 +251,13 @@ services:
       - TZ=$HA_TIMEZONE
 EOC
 
-log "Starting containers with $COMPOSE_CMD"
-$COMPOSE_CMD up -d
+if [[ "$DOCKER_AVAILABLE" == false ]]; then
+  warn "Docker daemon is not available; start it and run '$COMPOSE_CMD up -d' in $STACK_DIR to launch or restart the home automation stack."
+elif [[ "$STACK_WAS_RUNNING" == true ]]; then
+  log "Restarting existing containers with $COMPOSE_CMD"
+  $COMPOSE_CMD down
+  $COMPOSE_CMD up -d --force-recreate
+else
+  log "Starting containers with $COMPOSE_CMD"
+  $COMPOSE_CMD up -d
+fi
