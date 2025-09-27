@@ -13,6 +13,8 @@ fi
 
 log "Detected model: $MODEL"
 
+PROMPT_PI4=false
+
 case "$MODEL" in
   *"Raspberry Pi 5"*)
     OC_BLOCK=$(cat <<'EOT'
@@ -27,11 +29,12 @@ EOT
 )
     ;;
   *"Raspberry Pi 4"*)
+    PROMPT_PI4=true
     OC_BLOCK=$(cat <<'EOT'
 # --- RPi Home Installer Overclock (RPi 4) ---
-over_voltage=4
+over_voltage=5
 arm_freq=2000
-gpu_freq=600
+gpu_freq=650
 # --- End RPi Home Installer Overclock ---
 EOT
 )
@@ -45,6 +48,23 @@ esac
 if [[ ! -f "$CONFIG_FILE" ]]; then
   err "Configuration file $CONFIG_FILE not found"
   exit 1
+fi
+
+if [[ "$PROMPT_PI4" == true ]]; then
+  if [[ -n ${RPi_HOME_PI4_OC:-} ]]; then
+    if [[ ${RPi_HOME_PI4_OC} =~ ^([Yy][Ee]?[Ss]?|1|true|TRUE)$ ]]; then
+      log "Applying Raspberry Pi 4 overclock as requested via RPi_HOME_PI4_OC"
+    else
+      warn "Skipping Raspberry Pi 4 overclock (RPi_HOME_PI4_OC=${RPi_HOME_PI4_OC})"
+      exit 0
+    fi
+  elif [[ ! -t 0 ]]; then
+    warn "Skipping Raspberry Pi 4 overclock (non-interactive session, defaulting to No)"
+    exit 0
+  elif ! prompt_yes_no "Apply the Raspberry Pi 4 overclock profile (2000 MHz CPU / 650 MHz GPU, over_voltage=5)?" "N"; then
+    warn "Skipping Raspberry Pi 4 overclock per user choice"
+    exit 0
+  fi
 fi
 
 if grep -q "RPi Home Installer Overclock" "$CONFIG_FILE"; then
