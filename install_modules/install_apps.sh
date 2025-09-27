@@ -43,16 +43,25 @@ mkdir -p /etc/apt/keyrings
 nodesource_key_tmp=$(mktemp)
 nodesource_key_path="/etc/apt/keyrings/nodesource.gpg"
 nodesource_key_ready=false
+nodesource_key_urls=(
+  "https://deb.nodesource.com/gpgkey/nodesource.gpg.key"
+  "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
+)
 
-if curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o "${nodesource_key_tmp}"; then
-  if gpg --dearmor --batch --yes -o "${nodesource_key_path}" "${nodesource_key_tmp}"; then
-    nodesource_key_ready=true
+for key_url in "${nodesource_key_urls[@]}"; do
+  if curl -fsSL "$key_url" -o "${nodesource_key_tmp}"; then
+    if gpg --dearmor --batch --yes -o "${nodesource_key_path}" "${nodesource_key_tmp}"; then
+      nodesource_key_ready=true
+      log "Prepared NodeSource GPG key from $key_url"
+      break
+    else
+      warn "Failed to process NodeSource GPG key from $key_url"
+    fi
   else
-    warn "Failed to process NodeSource GPG key"
+    warn "Failed to download NodeSource GPG key from $key_url"
   fi
-else
-  warn "Failed to download NodeSource GPG key"
-fi
+done
+
 rm -f "${nodesource_key_tmp}"
 
 if [[ -f /etc/os-release ]]; then
@@ -62,7 +71,7 @@ fi
 
 if [[ ${nodesource_key_ready} == true ]]; then
   distro_codename="$(get_nodesource_codename)"
-  nodesource_channels=(node_current.x node_23.x node_22.x node_21.x node_20.x)
+  nodesource_channels=(node_20.x node_18.x)
   nodesource_list="/etc/apt/sources.list.d/nodesource.list"
   nodesource_setup_success=false
   selected_channel=""
@@ -83,7 +92,7 @@ EOF
 
   if [[ ${nodesource_setup_success} == true ]]; then
     log "Using NodeSource channel ${selected_channel} to install the latest Node.js packages"
-    apt-get install -y nodejs npm
+    apt-get install -y nodejs
     log "Node.js updated to $(node --version 2>/dev/null || echo 'unknown version')"
   else
     warn "Unable to configure any NodeSource repository; skipping Node.js upgrade"
@@ -109,6 +118,11 @@ if command -v snap >/dev/null 2>&1; then
       fi
     fi
   fi
+  if ! snap list snapd >/dev/null 2>&1; then
+    if ! snap install snapd; then
+      warn "Failed to install snapd management snap; snap installations may fail"
+    fi
+  fi
   if ! snap install gdu-disk-usage-analyzer; then
     warn "Failed to install gdu-disk-usage-analyzer via snap"
   fi
@@ -117,16 +131,43 @@ else
 fi
 
 pi_apps_installer="/tmp/pi-apps-installer.sh"
-if curl -fsSL https://pi-apps.io/install -o "${pi_apps_installer}"; then
-  if bash "${pi_apps_installer}"; then
-    log "Pi-Apps installer completed successfully"
-  else
-    warn "Pi-Apps installer returned a non-zero exit status"
+pi_apps_urls=(
+  "https://pi-apps.io/install"
+  "https://pi-apps.io/install/"
+  "https://raw.githubusercontent.com/Botspot/pi-apps/master/install"
+)
+pi_apps_downloaded=false
+for pi_apps_url in "${pi_apps_urls[@]}"; do
+  if curl -fsSL "$pi_apps_url" -o "${pi_apps_installer}"; then
+    if head -n1 "${pi_apps_installer}" | grep -q '^#!'; then
+      pi_apps_downloaded=true
+      log "Downloaded Pi-Apps installer from $pi_apps_url"
+      break
+    fi
   fi
-  rm -f "${pi_apps_installer}"
+done
+
+if [[ ${pi_apps_downloaded} == true ]]; then
+  pi_apps_user=""
+  if [[ -n ${TARGET_USER:-} && ${TARGET_USER} != "root" ]]; then
+    pi_apps_user="${TARGET_USER}"
+  elif [[ -n ${SUDO_USER:-} && ${SUDO_USER} != "root" ]]; then
+    pi_apps_user="${SUDO_USER}"
+  fi
+
+  if [[ -n ${pi_apps_user} ]]; then
+    if sudo -u "${pi_apps_user}" bash "${pi_apps_installer}"; then
+      log "Pi-Apps installer completed successfully for user ${pi_apps_user}"
+    else
+      warn "Pi-Apps installer returned a non-zero exit status for user ${pi_apps_user}"
+    fi
+  else
+    warn "Pi-Apps installer requires a non-root user but none could be determined"
+  fi
 else
-  warn "Failed to download Pi-Apps installer script"
+  warn "Failed to download a valid Pi-Apps installer script"
 fi
+rm -f "${pi_apps_installer}"
 
 if [[ ! -d /opt/pishrink ]]; then
   log "Cloning PiShrink into /opt/pishrink"

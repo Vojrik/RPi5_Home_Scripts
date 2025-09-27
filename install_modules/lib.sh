@@ -6,11 +6,6 @@ warn() { printf "\033[1;33m[WARN]\033[0m %s\n" "$1"; }
 err()  { printf "\033[1;31m[ERR ]\033[0m %s\n" "$1"; }
 
 get_nodesource_codename() {
-  if [[ ${VERSION_CODENAME:-} == "bookworm" && ( ${ID:-} == "debian" || ${ID:-} == "raspbian" ) ]]; then
-    printf '%s' "nodistro"
-    return
-  fi
-
   if [[ -n ${VERSION_CODENAME:-} ]]; then
     printf '%s' "${VERSION_CODENAME}"
     return
@@ -170,4 +165,3 @@ ensure_target_context() {
   mkdir -p "$TARGET_SCRIPTS_DIR"
   export TARGET_USER TARGET_HOME TARGET_SCRIPTS_DIR
 }
-

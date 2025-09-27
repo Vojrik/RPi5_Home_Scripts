@@ -35,6 +35,72 @@ normalize_nodesource_distribution() {
 
 normalize_nodesource_distribution "${nodesource_codename}"
 
+normalize_nodesource_channel() {
+  local fallback_channel="node_20.x" file updated_any=false
+  local -a repo_files=(/etc/apt/sources.list /etc/apt/sources.list.d/*.list)
+
+  for file in "${repo_files[@]}"; do
+    [[ -f "$file" ]] || continue
+    if grep -qE 'https://deb\.nodesource\.com/(node_current\.x|node_23\.x|node_22\.x|node_21\.x)' "$file"; then
+      if sed -E -i "s~(https://deb\\.nodesource\\.com/)(node_current\.x|node_23\.x|node_22\.x|node_21\.x)~\\1${fallback_channel}~g" "$file"; then
+        updated_any=true
+      else
+        warn "Failed to normalize NodeSource channel in $file"
+      fi
+    fi
+  done
+
+  if [[ ${updated_any} == true ]]; then
+    log "Normalized NodeSource repository channel to '${fallback_channel}'"
+  fi
+}
+
+normalize_nodesource_channel
+
+ensure_nodesource_key() {
+  local key_path="/etc/apt/keyrings/nodesource.gpg"
+  local desired_fingerprint="9FD3B784BC1C6FC31A8A0A1C1655A0AB68576280"
+  local -a key_urls=(
+    "https://deb.nodesource.com/gpgkey/nodesource.gpg.key"
+    "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key"
+  )
+
+  if ! command -v curl >/dev/null 2>&1; then
+    warn "curl command is required to refresh the NodeSource GPG key but is not available"
+    return
+  fi
+  if ! command -v gpg >/dev/null 2>&1; then
+    warn "gpg command is required to refresh the NodeSource GPG key but is not available"
+    return
+  fi
+
+  if [[ -f "$key_path" ]]; then
+    if gpg --show-keys --with-colons "$key_path" 2>/dev/null | grep -q "$desired_fingerprint"; then
+      return
+    fi
+  fi
+
+  install -m 0755 -d "$(dirname "$key_path")"
+  local tmp_file
+  tmp_file="$(mktemp)"
+
+  for key_url in "${key_urls[@]}"; do
+    if curl -fsSL "$key_url" -o "$tmp_file"; then
+      if gpg --dearmor --batch --yes -o "$key_path" "$tmp_file"; then
+        chmod a+r "$key_path"
+        log "Refreshed NodeSource GPG key from $key_url"
+        rm -f "$tmp_file"
+        return
+      fi
+    fi
+  done
+
+  rm -f "$tmp_file"
+  warn "Unable to refresh NodeSource GPG key; NodeSource repository updates may fail"
+}
+
+ensure_nodesource_key
+
 repair_docker_apt_key() {
   local repo_search_paths=(/etc/apt/sources.list /etc/apt/sources.list.d/*.list)
   local repo_files=()
