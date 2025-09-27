@@ -20,21 +20,31 @@ packages=(
   mosquitto-clients
 )
 
-if command -v node >/dev/null 2>&1; then
-  log "Node.js already present; skipping apt install"
-else
-  packages+=(nodejs)
-fi
-
-if command -v npm >/dev/null 2>&1; then
-  log "npm already present; skipping apt install"
-elif dpkg-query -W -f='${Version}\n' nodejs 2>/dev/null | grep -q 'nodesource'; then
-  warn "NodeSource-provided nodejs detected; Debian npm package conflicts, skipping npm install"
-else
-  packages+=(npm)
-fi
-
 apt-get install -y "${packages[@]}"
+
+if command -v node >/dev/null 2>&1; then
+  log "Detected existing Node.js version $(node --version 2>/dev/null || echo 'unknown')"
+else
+  log "Node.js not found; installing latest release"
+fi
+
+log "Configuring NodeSource Node.js repository for the latest release"
+apt-get install -y ca-certificates curl gnupg
+mkdir -p /etc/apt/keyrings
+curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+  | gpg --dearmor --batch --yes -o /etc/apt/keyrings/nodesource.gpg
+if [[ -f /etc/os-release ]]; then
+  # shellcheck disable=SC1091
+  source /etc/os-release
+fi
+nodesource_channel="node_current.x"
+distro_codename=${VERSION_CODENAME:-${UBUNTU_CODENAME:-nodistro}}
+cat <<EOF >/etc/apt/sources.list.d/nodesource.list
+deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/${nodesource_channel} ${distro_codename} main
+EOF
+apt-get update
+apt-get install -y nodejs npm
+log "Node.js updated to $(node --version 2>/dev/null || echo 'unknown version')"
 
 if command -v npm >/dev/null 2>&1; then
   log "Installing optional @openai/codex via npm"
