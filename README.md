@@ -32,3 +32,17 @@ The installer also adjusts paths for the selected user, wires the services into 
   ```bash
   systemctl status cpu-scheduler fanctrl rockpi-penta
   ```
+
+### Raspberry Pi 4 overclock profile
+
+When the installer detects a Raspberry Pi 4 it asks whether to apply the bundled overclock. The prompt defaults to **No**; only the explicit `y`/`yes` answer or setting the environment variable `RPi_HOME_PI4_OC=1` (or `true`) applies the tweak.
+
+The profile represents the highest configuration that has been tested without enabling the firmware turbo bit:
+
+```
+over_voltage=5
+arm_freq=2000
+gpu_freq=650
+```
+
+These settings are appended to `/boot/firmware/config.txt` inside a block marked `RPi Home Installer Overclock (RPi 4)`. If you need to revert them later, remove that block manually or rerun the installer and answer **No** at the prompt.
