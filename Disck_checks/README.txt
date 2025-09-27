@@ -18,6 +18,25 @@ Quick Overview (what runs, when, and where it logs)
 
 Desktop shortcuts point to the active log files with matching names.
 
+Graphical configuration utility
+-------------------------------
+The repository now ships with a Qt-based management GUI that can enable/disable
+the related services, adjust cron schedules and trigger the scripts manually.
+
+- Launch: `python3 -m Disck_checks.gui`
+- Requirements: `PySide6` (Qt for Python) and a desktop session.
+- Configuration is stored in `~/.config/rpi5-home/disk_checks.json` and includes
+  service names (`cpu-scheduler.service`, `fanctrl.service`, `rockpi-penta.service`
+  plus the disk-check units), log locations and cron timings.
+- The "Služby" tab provides toggles that call `systemctl enable --now` or
+  `systemctl disable --now` on the services installed by `install_rpi5_home.sh`
+  and the disk-check scripts.
+- The "Diskové kontroly" tab lets you adjust log folders, e-mail recipients,
+  SMART options, cron frequencies and run any of the scripts interactively.
+- Cron changes are written into the user's crontab inside a guarded
+  `# BEGIN/END RPI5_DISK_CHECKS` block, mirroring the schedule recommended in
+  this README.
+
 Current Cron Schedule
 ---------------------
 - Daily checks (19:00)
