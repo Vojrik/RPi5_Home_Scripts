@@ -61,7 +61,11 @@ if [[ -f /etc/os-release ]]; then
 fi
 
 if [[ ${nodesource_key_ready} == true ]]; then
-  distro_codename=${VERSION_CODENAME:-${UBUNTU_CODENAME:-nodistro}}
+  if [[ ${VERSION_CODENAME:-} == "bookworm" && ( ${ID:-} == "debian" || ${ID:-} == "raspbian" ) ]]; then
+    distro_codename="nodistro"
+  else
+    distro_codename=${VERSION_CODENAME:-${UBUNTU_CODENAME:-nodistro}}
+  fi
   nodesource_channels=(node_current.x node_23.x node_22.x node_21.x node_20.x)
   nodesource_list="/etc/apt/sources.list.d/nodesource.list"
   nodesource_setup_success=false
