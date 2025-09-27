@@ -216,57 +216,179 @@ EOC
 ensure_command mosquitto_passwd mosquitto-clients
 mosquitto_passwd -b -c "$MOSQUITTO_CONFIG_DIR/passwordfile" "$MQTT_USERNAME" "$MQTT_PASSWORD"
 
-cat > "$Z2M_DATA_DIR/configuration.yaml" <<EOC
-homeassistant: true
-permit_join: false
-mqtt:
-  base_topic: zigbee2mqtt
-  server: mqtt://mosquitto:1883
-  user: $MQTT_USERNAME
-  password: $MQTT_PASSWORD
-serial:
-  port: $ZIGBEE_ADAPTER
-advanced:
-  log_level: info
-frontend:
-  port: 8080
-EOC
+python3 - <<'PY'
+import json
+import os
+import pathlib
+import tempfile
+import textwrap
+from typing import Dict
 
-cat > "$STACK_DIR/docker-compose.yml" <<EOC
-version: "3.9"
-services:
-  mosquitto:
-    image: eclipse-mosquitto:2
-    restart: unless-stopped
-    ports:
-      - "1883:1883"
-      - "9001:9001"
-    volumes:
-      - ./mosquitto/config:/mosquitto/config
-      - ./mosquitto/data:/mosquitto/data
-  zigbee2mqtt:
-    image: koenkk/zigbee2mqtt:latest
-    restart: unless-stopped
-    depends_on:
-      - mosquitto
-    environment:
-      - TZ=$HA_TIMEZONE
-    volumes:
-      - ./zigbee2mqtt:/app/data
-    devices:
-      - $ZIGBEE_ADAPTER:$ZIGBEE_ADAPTER
-  homeassistant:
-    image: ghcr.io/home-assistant/home-assistant:stable
-    restart: unless-stopped
-    network_mode: host
-    privileged: true
-    depends_on:
-      - mosquitto
-    volumes:
-      - ./homeassistant:/config
-    environment:
-      - TZ=$HA_TIMEZONE
-EOC
+
+def dq(value: str) -> str:
+    """Return a double-quoted JSON-style string for YAML safety."""
+
+    return json.dumps(value)
+
+
+def render_configuration(base_dir: str, values: Dict[str, str]) -> pathlib.Path:
+    path = pathlib.Path(base_dir) / "configuration.yaml"
+    content = textwrap.dedent(
+        f"""
+        homeassistant: true
+        permit_join: false
+        mqtt:
+          base_topic: {dq("zigbee2mqtt")}
+          server: {dq("mqtt://mosquitto:1883")}
+          user: {dq(values["MQTT_USERNAME"])}
+          password: {dq(values["MQTT_PASSWORD"])}
+        serial:
+          port: {dq(values["ZIGBEE_ADAPTER"])}
+        advanced:
+          log_level: info
+        frontend:
+          port: 8080
+        """
+    ).lstrip()
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def render_compose(stack_dir: str, values: Dict[str, str]) -> pathlib.Path:
+    path = pathlib.Path(stack_dir) / "docker-compose.yml"
+    device_binding = f"{values['ZIGBEE_ADAPTER']}:{values['ZIGBEE_ADAPTER']}"
+    content = textwrap.dedent(
+        f"""
+        version: "3.9"
+        services:
+          mosquitto:
+            image: eclipse-mosquitto:2
+            restart: unless-stopped
+            ports:
+              - "1883:1883"
+              - "9001:9001"
+            volumes:
+              - ./mosquitto/config:/mosquitto/config
+              - ./mosquitto/data:/mosquitto/data
+          zigbee2mqtt:
+            image: koenkk/zigbee2mqtt:latest
+            restart: unless-stopped
+            depends_on:
+              - mosquitto
+            environment:
+              - TZ={dq(values["HA_TIMEZONE"])}
+            volumes:
+              - ./zigbee2mqtt:/app/data
+            devices:
+              - {dq(device_binding)}
+          homeassistant:
+            image: ghcr.io/home-assistant/home-assistant:stable
+            restart: unless-stopped
+            network_mode: host
+            privileged: true
+            depends_on:
+              - mosquitto
+            volumes:
+              - ./homeassistant:/config
+            environment:
+              - TZ={dq(values["HA_TIMEZONE"])}
+        """
+    ).lstrip()
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+values: Dict[str, str] = {
+    "MQTT_USERNAME": os.environ["MQTT_USERNAME"],
+    "MQTT_PASSWORD": os.environ["MQTT_PASSWORD"],
+    "HA_TIMEZONE": os.environ["HA_TIMEZONE"],
+    "ZIGBEE_ADAPTER": os.environ["ZIGBEE_ADAPTER"],
+}
+
+render_configuration(os.environ["Z2M_DATA_DIR"], values)
+render_compose(os.environ["STACK_DIR"], values)
+
+sample_values: Dict[str, str] = values.copy()
+sample_values.update(
+    {
+        "MQTT_USERNAME": "dry$user",
+        "MQTT_PASSWORD": "dry:pa#ss:word$",
+        "ZIGBEE_ADAPTER": "/dev/serial/by-id/adapter:with#chars",
+    }
+)
+
+
+with tempfile.TemporaryDirectory() as tmpdir:
+    z2m_tmp = pathlib.Path(tmpdir) / "zigbee2mqtt"
+    z2m_tmp.mkdir()
+    stack_tmp = pathlib.Path(tmpdir) / "stack"
+    stack_tmp.mkdir()
+    sample_config = render_configuration(str(z2m_tmp), sample_values)
+    sample_compose = render_compose(str(stack_tmp), sample_values)
+
+    parsed = False
+    try:  # optional validation if PyYAML is available
+        import yaml  # type: ignore
+    except ImportError:
+        pass
+    else:
+        for path in (sample_config, sample_compose):
+            with path.open("r", encoding="utf-8") as fh:
+                yaml.safe_load(fh)
+        parsed = True
+
+    if not parsed:
+        config_lines = sample_config.read_text(encoding="utf-8").splitlines()
+        for line in config_lines:
+            stripped = line.strip()
+            if stripped.startswith("user:") or stripped.startswith("password:"):
+                value = stripped.split(":", 1)[1].strip()
+                if not (value.startswith('"') and value.endswith('"')):
+                    raise SystemExit(
+                        f"{sample_config.name} dry-run value not properly quoted: {stripped}"
+                    )
+
+        for index, line in enumerate(config_lines):
+            if line.strip() == "serial:":
+                if index + 1 >= len(config_lines):
+                    raise SystemExit("Serial block missing port entry in dry-run configuration")
+                serial_line = config_lines[index + 1].strip()
+                if not serial_line.startswith("port:"):
+                    raise SystemExit("Serial block missing port entry in dry-run configuration")
+                value = serial_line.split(":", 1)[1].strip()
+                if not (value.startswith('"') and value.endswith('"')):
+                    raise SystemExit(
+                        "Serial port dry-run value not properly quoted: " + serial_line
+                    )
+                break
+        else:
+            raise SystemExit("Serial block missing in dry-run configuration")
+
+        compose_lines = sample_compose.read_text(encoding="utf-8").splitlines()
+        for line in compose_lines:
+            stripped = line.strip()
+            if stripped.startswith("- TZ="):
+                value = stripped.split("=", 1)[1].strip()
+                if not (value.startswith('"') and value.endswith('"')):
+                    raise SystemExit(
+                        f"{sample_compose.name} dry-run TZ value not properly quoted: {stripped}"
+                    )
+
+        for index, line in enumerate(compose_lines):
+            if line.strip() == "devices:":
+                if index + 1 >= len(compose_lines):
+                    raise SystemExit("Devices block missing entry in dry-run compose file")
+                device_line = compose_lines[index + 1].strip()
+                if not (device_line.startswith('- "') and device_line.endswith('"')):
+                    raise SystemExit(
+                        "Devices mapping dry-run value not properly quoted: " + device_line
+                    )
+                break
+        else:
+            raise SystemExit("Devices block missing in dry-run compose file")
+
+print("Dry-run quoting check completed for credentials with special characters.")
+PY
 
 if [[ "$DOCKER_AVAILABLE" == false ]]; then
   warn "Docker daemon is not available; start it and run '$COMPOSE_CMD up -d' in $STACK_DIR to launch or restart the home automation stack."
