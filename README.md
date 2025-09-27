@@ -11,7 +11,7 @@ chmod +x install_rpi5_home.sh
 sudo ./install_rpi5_home.sh
 ```
 
-The script describes the available modules, asks which ones to run, and then prompts for the target user, installation paths, and service credentials. Run it with `sudo` on a machine that has internet access. If `git` is not installed yet, add `sudo apt update && sudo apt install -y git` before the first command.
+The script describes the available modules, asks which ones to run, and then prompts for the target user, installation paths, and service credentials. Each interactive question pauses inside a magenta banner so it is obvious when input is required. Run it with `sudo` on a machine that has internet access. If `git` is not installed yet, add `sudo apt update && sudo apt install -y git` before the first command.
 
 ## What gets installed
 

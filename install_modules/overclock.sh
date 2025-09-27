@@ -61,9 +61,13 @@ if [[ "$PROMPT_PI4" == true ]]; then
   elif [[ ! -t 0 ]]; then
     warn "Skipping Raspberry Pi 4 overclock (non-interactive session, defaulting to No)"
     exit 0
-  elif ! prompt_yes_no "Apply the Raspberry Pi 4 overclock profile (2000 MHz CPU / 650 MHz GPU, over_voltage=5)?" "N"; then
-    warn "Skipping Raspberry Pi 4 overclock per user choice"
-    exit 0
+  else
+    prompt_message=$'Apply the Raspberry Pi 4 overclock profile?\nCPU: 2000 MHz    GPU: 650 MHz    over_voltage: 5'
+    if ! prompt_yes_no "$prompt_message" "N"; then
+      warn "Skipping Raspberry Pi 4 overclock per user choice"
+      exit 0
+    fi
+    unset prompt_message
   fi
 fi
 
