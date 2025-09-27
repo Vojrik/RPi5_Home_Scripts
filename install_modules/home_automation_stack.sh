@@ -48,10 +48,22 @@ install_docker_from_docker_repo() {
   local repo_file="/etc/apt/sources.list.d/docker.list"
 
   install -m 0755 -d "$keyring_dir"
-  if ! curl -fsSL https://download.docker.com/linux/debian/gpg -o "$keyring_file"; then
+  local tmp_key
+  tmp_key="$(mktemp)"
+  if ! curl -fsSL https://download.docker.com/linux/debian/gpg -o "$tmp_key"; then
     warn "Failed to download Docker GPG key"
+    rm -f "$tmp_key"
     return 1
   fi
+
+  if ! gpg --dearmor < "$tmp_key" > "$keyring_file"; then
+    warn "Failed to convert Docker GPG key to keyring format"
+    rm -f "$tmp_key" "$keyring_file"
+    return 1
+  fi
+
+  rm -f "$tmp_key"
+
   chmod a+r "$keyring_file"
 
   local codename="$(. /etc/os-release && echo "$VERSION_CODENAME")"
