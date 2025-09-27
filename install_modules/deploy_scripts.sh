@@ -48,16 +48,22 @@ sync_tree() {
   fi
 }
 
-for dir in "$@"; do
-  local_src="$REPO_ROOT/$dir"
-  if [[ ! -d "$local_src" ]]; then
-    warn "Source directory $local_src not found; skipping"
-    continue
-  fi
-  dest="$TARGET_SCRIPTS_DIR/$dir"
-  log "Deploying $dir to $dest"
-  mkdir -p "$dest"
-  sync_tree "$local_src" "$dest"
-  chown -R "$TARGET_USER":"$TARGET_USER" "$dest"
-  find "$dest" -type f -name '*.sh' -exec chmod +x {} +
-done
+deploy_directories() {
+  local local_src dest
+
+  for dir in "$@"; do
+    local_src="$REPO_ROOT/$dir"
+    if [[ ! -d "$local_src" ]]; then
+      warn "Source directory $local_src not found; skipping"
+      continue
+    fi
+    dest="$TARGET_SCRIPTS_DIR/$dir"
+    log "Deploying $dir to $dest"
+    mkdir -p "$dest"
+    sync_tree "$local_src" "$dest"
+    chown -R "$TARGET_USER":"$TARGET_USER" "$dest"
+    find "$dest" -type f -name '*.sh' -exec chmod +x {} +
+  done
+}
+
+deploy_directories "$@"
