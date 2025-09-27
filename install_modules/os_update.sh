@@ -6,6 +6,35 @@ source "$SCRIPT_DIR/lib.sh"
 log "Updating and upgrading the operating system"
 export DEBIAN_FRONTEND=noninteractive
 
+if [[ -f /etc/os-release ]]; then
+  # shellcheck disable=SC1091
+  source /etc/os-release
+fi
+
+nodesource_codename="$(get_nodesource_codename)"
+
+normalize_nodesource_distribution() {
+  local codename="$1" file updated_any=false
+  local -a repo_files=(/etc/apt/sources.list /etc/apt/sources.list.d/*.list)
+
+  for file in "${repo_files[@]}"; do
+    [[ -f "$file" ]] || continue
+    if grep -qE '^[[:space:]]*deb(-src)?\s+(\[[^]]*\]\s*)?https://deb\.nodesource\.com/' "$file"; then
+      if sed -E -i "s|(deb(-src)?\s+(\[[^]]*\]\s*)?https://deb\\.nodesource\\.com/[^[:space:]]+\s+)[^[:space:]]+|\\1${codename}|g" "$file"; then
+        updated_any=true
+      else
+        warn "Failed to update NodeSource distribution in $file"
+      fi
+    fi
+  done
+
+  if [[ ${updated_any} == true ]]; then
+    log "Ensured NodeSource repositories target distribution '${codename}'"
+  fi
+}
+
+normalize_nodesource_distribution "${nodesource_codename}"
+
 repair_docker_apt_key() {
   local repo_search_paths=(/etc/apt/sources.list /etc/apt/sources.list.d/*.list)
   local repo_files=()

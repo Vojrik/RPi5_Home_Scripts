@@ -5,6 +5,25 @@ log()  { printf "\033[1;32m[INFO]\033[0m %s\n" "$1"; }
 warn() { printf "\033[1;33m[WARN]\033[0m %s\n" "$1"; }
 err()  { printf "\033[1;31m[ERR ]\033[0m %s\n" "$1"; }
 
+get_nodesource_codename() {
+  if [[ ${VERSION_CODENAME:-} == "bookworm" && ( ${ID:-} == "debian" || ${ID:-} == "raspbian" ) ]]; then
+    printf '%s' "nodistro"
+    return
+  fi
+
+  if [[ -n ${VERSION_CODENAME:-} ]]; then
+    printf '%s' "${VERSION_CODENAME}"
+    return
+  fi
+
+  if [[ -n ${UBUNTU_CODENAME:-} ]]; then
+    printf '%s' "${UBUNTU_CODENAME}"
+    return
+  fi
+
+  printf '%s' "nodistro"
+}
+
 PROMPT_BANNER_COLOR=${PROMPT_BANNER_COLOR:-$'\033[38;5;45m'}
 PROMPT_TEXT_COLOR=${PROMPT_TEXT_COLOR:-$'\033[1;37m'}
 PROMPT_RESET=$'\033[0m'
