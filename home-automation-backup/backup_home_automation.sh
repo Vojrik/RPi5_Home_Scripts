@@ -1,16 +1,43 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ---- Environment detection ----
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+SCRIPTS_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+ENV_FILE="$SCRIPTS_ROOT/.rpi5_home_env"
+if [ -f "$ENV_FILE" ]; then
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+fi
+
+if [ -z "${TARGET_USER:-}" ]; then
+  TARGET_USER=$(stat -c %U "$SCRIPT_DIR" 2>/dev/null || id -un)
+fi
+
+if [ -z "${TARGET_HOME:-}" ]; then
+  if command -v getent >/dev/null 2>&1; then
+    TARGET_HOME=$(getent passwd "$TARGET_USER" | cut -d: -f6)
+  fi
+fi
+
+if [ -z "${TARGET_HOME:-}" ]; then
+  TARGET_HOME=$(cd "$SCRIPTS_ROOT/.." && pwd)
+fi
+
+if [ -z "${TARGET_SCRIPTS_DIR:-}" ]; then
+  TARGET_SCRIPTS_DIR="$SCRIPTS_ROOT"
+fi
+
 # ---- Config ----
-BACKUP_DIR="/home/vojrik/Desktop/md0/_RPi5_Home_OS/Apps_Backups"
-# The real Home Assistant config lives in /home/vojrik/homeassistant (bind-mounted as /config)
+BACKUP_DIR="${BACKUP_DIR:-$TARGET_HOME/Desktop/md0/_RPi5_Home_OS/Apps_Backups}"
+# The real Home Assistant config lives in ${TARGET_HOME}/homeassistant (bind-mounted as /config)
 # see: docker inspect homeassistant
-HA_SRC="/home/vojrik/homeassistant"
+HA_SRC="${HA_SRC:-$TARGET_HOME/homeassistant}"
 Z2M_SRC="/opt/home-automation/zigbee2mqtt/data"
 MQTT_USER="ha"
 MQTT_PASS_FILE="/opt/home-automation/credentials/mqtt_password.txt"
 # OctoPrint
-OCTOPRINT_BIN="/home/vojrik/OctoPrint/venv/bin/octoprint"
+OCTOPRINT_BIN="${OCTOPRINT_BIN:-$TARGET_HOME/OctoPrint/venv/bin/octoprint}"
 OCTO_EXCLUDES=""   # leave empty to include everything in the backup
 
 # Home Assistant API for native "Backup" (if available)
@@ -177,8 +204,8 @@ $NICE -n 10 $IONICE -c 3 $TAR -C "$HA_STAGE" -czf "$HA_CFG_ARCHIVE" .
 if [ ! -x "$OCTOPRINT_BIN" ]; then
   if command -v octoprint >/dev/null 2>&1; then
     OCTOPRINT_BIN=$(command -v octoprint)
-  elif [ -x "/home/vojrik/oprint/bin/octoprint" ]; then
-    OCTOPRINT_BIN="/home/vojrik/oprint/bin/octoprint"
+  elif [ -x "$TARGET_HOME/oprint/bin/octoprint" ]; then
+    OCTOPRINT_BIN="$TARGET_HOME/oprint/bin/octoprint"
   fi
 fi
 

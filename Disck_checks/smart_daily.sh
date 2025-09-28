@@ -2,12 +2,42 @@
 # /home/vojrik/Scripts/Disck_checks/smart_daily.sh
 set -Eeuo pipefail
 
-export MSMTP_CONFIG=/home/vojrik/Scripts/Disck_checks/.msmtprc
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+SCRIPTS_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+ENV_FILE="$SCRIPTS_ROOT/.rpi5_home_env"
+if [[ -f "$ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+fi
+
+if [[ -z ${TARGET_USER:-} ]]; then
+  TARGET_USER=$(stat -c %U "$SCRIPT_DIR" 2>/dev/null || id -un)
+fi
+
+if [[ -z ${TARGET_HOME:-} ]]; then
+  if command -v getent >/dev/null 2>&1; then
+    TARGET_HOME=$(getent passwd "$TARGET_USER" | cut -d: -f6)
+  fi
+fi
+
+if [[ -z ${TARGET_HOME:-} ]]; then
+  TARGET_HOME=$(cd "$SCRIPTS_ROOT/.." && pwd)
+fi
+
+if [[ -z ${TARGET_SCRIPTS_DIR:-} ]]; then
+  TARGET_SCRIPTS_DIR="$SCRIPTS_ROOT"
+fi
+
+TARGET_DESKTOP="$TARGET_HOME/Desktop"
+mkdir -p "$TARGET_DESKTOP" 2>/dev/null || true
+
+: "${MSMTP_CONFIG:=${TARGET_SCRIPTS_DIR}/Disck_checks/.msmtprc}"
+export MSMTP_CONFIG
 
 RECIPIENT="Vojta.Hamacek@seznam.cz"
 LOG_DIR_SYS="/var/log/Disck_checks"
 LOG_NAME="smart_daily.log"
-LOG_DIR_FALLBACK="$HOME/Disck_checks/logs"
+LOG_DIR_FALLBACK="$TARGET_HOME/.local/state/Disck_checks/logs"
 # Safe log configuration with fallback to $HOME when permissions are insufficient
 if mkdir -p "$LOG_DIR_SYS" 2>/dev/null && : > "$LOG_DIR_SYS/$LOG_NAME" 2>/dev/null; then
   LOG="$LOG_DIR_SYS/$LOG_NAME"
@@ -65,7 +95,7 @@ log(){ echo "[$(date +%F\ %T)] $*" | tee -a "$LOG"; }
 
 # State files used to track long-running self-tests
 STATE_DIR_SYS="/var/lib/Disck_checks"
-STATE_DIR_FALLBACK="$HOME/.local/state/Disck_checks"
+STATE_DIR_FALLBACK="$TARGET_HOME/.local/state/Disck_checks"
 if mkdir -p "$STATE_DIR_SYS" 2>/dev/null; then
   STATE_DIR="$STATE_DIR_SYS"
 else
@@ -116,9 +146,9 @@ if $ABORT_RUNNING; then
   done
   log "ABORT completed."
   # After aborting, terminate execution
-  chown vojrik:vojrik "$LOG" 2>/dev/null || true
-  ln -sfn "$LOG" "/home/vojrik/Desktop/$LOG_NAME" 2>/dev/null || true
-  chown -h vojrik:vojrik "/home/vojrik/Desktop/$LOG_NAME" 2>/dev/null || true
+  chown "$TARGET_USER":"$TARGET_USER" "$LOG" 2>/dev/null || true
+  ln -sfn "$LOG" "$TARGET_DESKTOP/$LOG_NAME" 2>/dev/null || true
+  chown -h "$TARGET_USER":"$TARGET_USER" "$TARGET_DESKTOP/$LOG_NAME" 2>/dev/null || true
   exit 0
 fi
 
@@ -393,15 +423,15 @@ if (( fail )); then
     echo "---- FULL LOG ----"
     echo
     cat "$LOG"
-  } | msmtp -C /home/vojrik/Scripts/Disck_checks/.msmtprc -a default "$RECIPIENT" && sent_mail=true || true
+  } | msmtp -C "$MSMTP_CONFIG" -a default "$RECIPIENT" && sent_mail=true || true
 else
   log "STATUS: OK - email not sent"
 fi
 
 # Ensure the log ownership and desktop symlink always point to the current log file
-chown vojrik:vojrik "$LOG" 2>/dev/null || true
-ln -sfn "$LOG" "/home/vojrik/Desktop/$LOG_NAME" 2>/dev/null || true
-chown -h vojrik:vojrik "/home/vojrik/Desktop/$LOG_NAME" 2>/dev/null || true
+chown "$TARGET_USER":"$TARGET_USER" "$LOG" 2>/dev/null || true
+ln -sfn "$LOG" "$TARGET_DESKTOP/$LOG_NAME" 2>/dev/null || true
+chown -h "$TARGET_USER":"$TARGET_USER" "$TARGET_DESKTOP/$LOG_NAME" 2>/dev/null || true
 
 # Unified final status
 if (( fail )); then
