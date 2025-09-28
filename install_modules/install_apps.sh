@@ -31,6 +31,104 @@ apt-get install -y "${packages[@]}"
 
 installed_node_version="not installed"
 
+ensure_terminal_desktop_entry() {
+  local app_name="$1" exec_command="$2" comment="$3" icon="$4" extra_categories="$5" extra_keywords="$6"
+  local desktop_file="/usr/share/applications/${app_name}.desktop"
+
+  local categories="System;Utility;"
+  if [[ -n "$extra_categories" ]]; then
+    categories+="$extra_categories"
+  fi
+
+  local keywords="$extra_keywords"
+  if [[ -n "$keywords" ]]; then
+    keywords="\nKeywords=${keywords}"
+  fi
+
+  local desktop_contents
+  read -r -d '' desktop_contents <<EOF
+[Desktop Entry]
+Name=${app_name}
+Comment=${comment}
+Exec=${exec_command}
+Terminal=true
+Type=Application
+Categories=${categories}
+Icon=${icon}
+${keywords}
+EOF
+
+  if [[ ! -f "$desktop_file" ]] || ! cmp -s <(printf '%s\n' "$desktop_contents") "$desktop_file"; then
+    log "Refreshing ${app_name} desktop entry at $desktop_file"
+    printf '%s\n' "$desktop_contents" >"$desktop_file"
+  else
+    log "${app_name} desktop entry already up to date"
+  fi
+
+  chmod 0644 "$desktop_file"
+}
+
+determine_primary_user() {
+  local user="${TARGET_USER:-}" home="${TARGET_HOME:-}"
+
+  if [[ -z "$user" ]]; then
+    if [[ -n ${SUDO_USER:-} && ${SUDO_USER} != "root" ]]; then
+      user="${SUDO_USER}"
+    fi
+  fi
+
+  if [[ -z "$user" ]]; then
+    user=$(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1; exit}' /etc/passwd)
+  fi
+
+  if [[ -n "$user" && -z "$home" ]]; then
+    home=$(getent passwd "$user" | cut -d: -f6)
+  fi
+
+  if [[ -n "$user" && -n "$home" ]]; then
+    printf '%s\n%s\n' "$user" "$home"
+  fi
+}
+
+deploy_shortcut_to_desktop() {
+  local app_name="$1"
+  local user home
+  mapfile -t user_home < <(determine_primary_user)
+
+  if (( ${#user_home[@]} != 2 )); then
+    warn "Unable to determine target user for ${app_name} desktop shortcut"
+    return
+  fi
+
+  user="${user_home[0]}"
+  home="${user_home[1]}"
+  local desktop_dir="$home/Desktop"
+  local desktop_link="$desktop_dir/${app_name}.desktop"
+  local source_file="/usr/share/applications/${app_name}.desktop"
+
+  mkdir -p "$desktop_dir"
+  if [[ ! -f "$source_file" ]]; then
+    warn "${app_name} desktop entry not found at ${source_file}; skipping user shortcut"
+    return
+  fi
+
+  if [[ ! -f "$desktop_link" ]]; then
+    log "Placing ${app_name} desktop shortcut for user $user"
+    cp "$source_file" "$desktop_link"
+  else
+    log "${app_name} desktop shortcut already exists at $desktop_link"
+  fi
+
+  chmod 0755 "$desktop_link"
+  chown "$user":"$user" "$desktop_link" 2>/dev/null || true
+}
+
+ensure_terminal_desktop_entry "s-tui" "s-tui" "Terminal-based system monitor" "utilities-system-monitor" "" "monitor;cpu;stress;"
+deploy_shortcut_to_desktop "s-tui"
+
+ensure_terminal_desktop_entry "htop" "htop" "Interactive process viewer" "utilities-system-monitor" "" "process;monitor;"
+deploy_shortcut_to_desktop "htop"
+
 if command -v node >/dev/null 2>&1; then
   installed_node_version=$(node --version 2>/dev/null || echo "vunknown")
   log "Detected existing Node.js version ${installed_node_version}"

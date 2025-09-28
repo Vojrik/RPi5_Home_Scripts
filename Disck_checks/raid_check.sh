@@ -2,6 +2,35 @@
 # /home/vojrik/Scripts/Disck_checks/raid_check.sh
 set -euo pipefail
 
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+SCRIPTS_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+ENV_FILE="$SCRIPTS_ROOT/.rpi5_home_env"
+if [[ -f "$ENV_FILE" ]]; then
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+fi
+
+if [[ -z ${TARGET_USER:-} ]]; then
+  TARGET_USER=$(stat -c %U "$SCRIPT_DIR" 2>/dev/null || id -un)
+fi
+
+if [[ -z ${TARGET_HOME:-} ]]; then
+  if command -v getent >/dev/null 2>&1; then
+    TARGET_HOME=$(getent passwd "$TARGET_USER" | cut -d: -f6)
+  fi
+fi
+
+if [[ -z ${TARGET_HOME:-} ]]; then
+  TARGET_HOME=$(cd "$SCRIPTS_ROOT/.." && pwd)
+fi
+
+if [[ -z ${TARGET_SCRIPTS_DIR:-} ]]; then
+  TARGET_SCRIPTS_DIR="$SCRIPTS_ROOT"
+fi
+
+TARGET_DESKTOP="$TARGET_HOME/Desktop"
+mkdir -p "$TARGET_DESKTOP" 2>/dev/null || true
+
 DRY_RUN=false
 while (( "$#" )); do
   case "$1" in
@@ -13,12 +42,13 @@ while (( "$#" )); do
 done
 
 # --- mail/MSMTP ---
-export MSMTP_CONFIG=/home/vojrik/Scripts/Disck_checks/.msmtprc
+: "${MSMTP_CONFIG:=${TARGET_SCRIPTS_DIR}/Disck_checks/.msmtprc}"
+export MSMTP_CONFIG
 RECIPIENT="Vojta.Hamacek@seznam.cz"
 
 LOG_DIR_SYS="/var/log/Disck_checks"
 LOG_NAME="raid_check.log"
-LOG_DIR_FALLBACK="$HOME/Disck_checks/logs"
+LOG_DIR_FALLBACK="$TARGET_HOME/.local/state/Disck_checks/logs"
 # Safe log configuration with fallback to $HOME when permissions are insufficient
 if mkdir -p "$LOG_DIR_SYS" 2>/dev/null && : > "$LOG_DIR_SYS/$LOG_NAME" 2>/dev/null; then
   LOG="$LOG_DIR_SYS/$LOG_NAME"
@@ -37,9 +67,9 @@ dow="$(date +%u)"   # 1=Mon, 2=Tue, ... 7=Sun
 dom="$(date +%d)"   # 01..31
 if [[ "$dow" != "2" || $((10#$dom)) -gt 7 ]]; then
   echo "[$(ts)] STATUS: OK - not the first Tuesday (dow=$dow, dom=$dom). Email not sent." >> "$LOG"
-  chown vojrik:vojrik "$LOG" 2>/dev/null || true
-  ln -sfn "$LOG" "/home/vojrik/Desktop/$LOG_NAME" 2>/dev/null || true
-  chown -h vojrik:vojrik "/home/vojrik/Desktop/$LOG_NAME" 2>/dev/null || true
+  chown "$TARGET_USER":"$TARGET_USER" "$LOG" 2>/dev/null || true
+  ln -sfn "$LOG" "$TARGET_DESKTOP/$LOG_NAME" 2>/dev/null || true
+  chown -h "$TARGET_USER":"$TARGET_USER" "$TARGET_DESKTOP/$LOG_NAME" 2>/dev/null || true
   exit 0
 fi
 
@@ -132,7 +162,7 @@ if (( ${#problems[@]} > 0 )); then
     echo "Full log:"
     echo
     cat "$LOG"
-  } | msmtp -C /home/vojrik/Scripts/Disck_checks/.msmtprc -a default "$RECIPIENT" && sent_mail=true || true
+  } | msmtp -C "$MSMTP_CONFIG" -a default "$RECIPIENT" && sent_mail=true || true
   if $sent_mail; then
     echo "$(ts): ALERT sent to $RECIPIENT" >> "$LOG"
   else
@@ -152,6 +182,6 @@ else
 fi
 
 # Ensure the log ownership and desktop symlink always point to the current file
-chown vojrik:vojrik "$LOG" 2>/dev/null || true
-ln -sfn "$LOG" "/home/vojrik/Desktop/$LOG_NAME" 2>/dev/null || true
-chown -h vojrik:vojrik "/home/vojrik/Desktop/$LOG_NAME" 2>/dev/null || true
+chown "$TARGET_USER":"$TARGET_USER" "$LOG" 2>/dev/null || true
+ln -sfn "$LOG" "$TARGET_DESKTOP/$LOG_NAME" 2>/dev/null || true
+chown -h "$TARGET_USER":"$TARGET_USER" "$TARGET_DESKTOP/$LOG_NAME" 2>/dev/null || true
