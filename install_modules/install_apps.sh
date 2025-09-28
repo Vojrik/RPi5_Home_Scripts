@@ -31,26 +31,38 @@ apt-get install -y "${packages[@]}"
 
 installed_node_version="not installed"
 
-ensure_stui_desktop_entry() {
-  local desktop_file="/usr/share/applications/s-tui.desktop"
+ensure_terminal_desktop_entry() {
+  local app_name="$1" exec_command="$2" comment="$3" icon="$4" extra_categories="$5" extra_keywords="$6"
+  local desktop_file="/usr/share/applications/${app_name}.desktop"
+
+  local categories="System;Utility;"
+  if [[ -n "$extra_categories" ]]; then
+    categories+="$extra_categories"
+  fi
+
+  local keywords="$extra_keywords"
+  if [[ -n "$keywords" ]]; then
+    keywords="\nKeywords=${keywords}"
+  fi
+
   local desktop_contents
-  read -r -d '' desktop_contents <<'EOF'
+  read -r -d '' desktop_contents <<EOF
 [Desktop Entry]
-Name=s-tui
-Comment=Terminal-based system monitor
-Exec=s-tui
+Name=${app_name}
+Comment=${comment}
+Exec=${exec_command}
 Terminal=true
 Type=Application
-Categories=System;Utility;
-Keywords=monitor;cpu;stress;
-Icon=utilities-system-monitor
+Categories=${categories}
+Icon=${icon}
+${keywords}
 EOF
 
   if [[ ! -f "$desktop_file" ]] || ! cmp -s <(printf '%s\n' "$desktop_contents") "$desktop_file"; then
-    log "Refreshing s-tui desktop entry at $desktop_file"
+    log "Refreshing ${app_name} desktop entry at $desktop_file"
     printf '%s\n' "$desktop_contents" >"$desktop_file"
   else
-    log "s-tui desktop entry already up to date"
+    log "${app_name} desktop entry already up to date"
   fi
 
   chmod 0644 "$desktop_file"
@@ -78,34 +90,44 @@ determine_primary_user() {
   fi
 }
 
-deploy_stui_shortcut_to_desktop() {
+deploy_shortcut_to_desktop() {
+  local app_name="$1"
   local user home
   mapfile -t user_home < <(determine_primary_user)
 
   if (( ${#user_home[@]} != 2 )); then
-    warn "Unable to determine target user for s-tui desktop shortcut"
+    warn "Unable to determine target user for ${app_name} desktop shortcut"
     return
   fi
 
   user="${user_home[0]}"
   home="${user_home[1]}"
   local desktop_dir="$home/Desktop"
-  local desktop_link="$desktop_dir/s-tui.desktop"
+  local desktop_link="$desktop_dir/${app_name}.desktop"
+  local source_file="/usr/share/applications/${app_name}.desktop"
 
   mkdir -p "$desktop_dir"
+  if [[ ! -f "$source_file" ]]; then
+    warn "${app_name} desktop entry not found at ${source_file}; skipping user shortcut"
+    return
+  fi
+
   if [[ ! -f "$desktop_link" ]]; then
-    log "Placing s-tui desktop shortcut for user $user"
-    cp /usr/share/applications/s-tui.desktop "$desktop_link"
+    log "Placing ${app_name} desktop shortcut for user $user"
+    cp "$source_file" "$desktop_link"
   else
-    log "s-tui desktop shortcut already exists at $desktop_link"
+    log "${app_name} desktop shortcut already exists at $desktop_link"
   fi
 
   chmod 0755 "$desktop_link"
   chown "$user":"$user" "$desktop_link" 2>/dev/null || true
 }
 
-ensure_stui_desktop_entry
-deploy_stui_shortcut_to_desktop
+ensure_terminal_desktop_entry "s-tui" "s-tui" "Terminal-based system monitor" "utilities-system-monitor" "" "monitor;cpu;stress;"
+deploy_shortcut_to_desktop "s-tui"
+
+ensure_terminal_desktop_entry "htop" "htop" "Interactive process viewer" "utilities-system-monitor" "" "process;monitor;"
+deploy_shortcut_to_desktop "htop"
 
 if command -v node >/dev/null 2>&1; then
   installed_node_version=$(node --version 2>/dev/null || echo "vunknown")
