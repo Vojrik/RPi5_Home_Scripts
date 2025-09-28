@@ -78,3 +78,13 @@ fi
 
 log "Appending overclock configuration to $CONFIG_FILE"
 printf '\n%s\n' "$OC_BLOCK" >> "$CONFIG_FILE"
+
+if [[ "$PROMPT_PI4" == true ]]; then
+  if [[ -x "$SCRIPT_DIR/configure_xrdp_pixel.sh" ]]; then
+    log "Configuring XRDP PIXEL desktop for Raspberry Pi 4"
+    ensure_target_context
+    TARGET_USER="${TARGET_USER:-}" "$SCRIPT_DIR/configure_xrdp_pixel.sh"
+  else
+    warn "configure_xrdp_pixel.sh is missing; skipping XRDP PIXEL setup"
+  fi
+fi
