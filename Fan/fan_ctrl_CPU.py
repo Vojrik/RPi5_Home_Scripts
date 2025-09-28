@@ -14,8 +14,8 @@ MODE_FILE = "/run/fan_mode"  # contents: "normal" or "silent"
 hyst = 1
 
 tempSteps = [40, 44.99, 45, 47, 50, 54.99, 55, 58, 61, 64, 67, 70]
-speedSteps_normal = [0.1, 0.1, 18, 22, 26, 30, 30, 35, 40, 50, 60, 100]
-speedSteps_silent = [0.1, 0.1, 18, 19, 20, 22, 22, 25, 28, 31, 34, 40]
+speedSteps_normal = [18.5, 18.5, 19, 22, 26, 30, 30, 35, 40, 50, 60, 100]
+speedSteps_silent = [18.5, 18.5, 19, 21, 21, 22, 22, 25, 27, 29, 32, 35]
 
 profiles = {
     "normal": speedSteps_normal,
