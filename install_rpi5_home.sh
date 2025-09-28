@@ -41,7 +41,7 @@ if prompt_yes_no "Run the base installation (steps 1-4)?" "Y"; then
   "$MODULES_DIR/overclock.sh"
   "$MODULES_DIR/os_update.sh"
   "$MODULES_DIR/install_apps.sh"
-  "$MODULES_DIR/deploy_scripts.sh" Backup CPU_freq Fan
+  "$MODULES_DIR/deploy_scripts.sh" Backup CPU_freq Disck_checks Fan
   log "Base installation complete"
 else
   warn "Base installation skipped by user"

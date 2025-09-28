@@ -11,6 +11,8 @@ packages=(
   git
   git-cola
   python3
+  python3-pip
+  python3-venv
   idle3
   s-tui
   htop
@@ -21,6 +23,10 @@ packages=(
   xrdp
   rpi-imager
   gparted
+  libxcb-cursor0
+  libxcb-xinerama0
+  libxcb-xinput0
+  libxkbcommon-x11-0
   snapd
   gsmartcontrol
   gimp
@@ -28,6 +34,39 @@ packages=(
 )
 
 apt-get install -y "${packages[@]}"
+
+if command -v python3 >/dev/null 2>&1; then
+  if python3 -m pip --version >/dev/null 2>&1; then
+    pip_supports_break=false
+    if python3 -m pip install --help 2>&1 | grep -q -- '--break-system-packages'; then
+      pip_supports_break=true
+    fi
+
+    pip_upgrade_args=(install --upgrade pip)
+    pip_install_args=(install --upgrade PySide6)
+
+    if [[ ${pip_supports_break} == true ]]; then
+      pip_upgrade_args=(install --break-system-packages --upgrade pip)
+      pip_install_args=(install --break-system-packages --upgrade PySide6)
+    else
+      warn "python3 pip does not support --break-system-packages; installing PySide6 without that guard"
+    fi
+
+    if ! python3 -m pip "${pip_upgrade_args[@]}"; then
+      warn "Unable to upgrade pip; continuing with existing version"
+    fi
+
+    if python3 -m pip "${pip_install_args[@]}"; then
+      log "PySide6 installed system-wide for the disk check GUI"
+    else
+      warn "PySide6 installation failed; disk check GUI may not run"
+    fi
+  else
+    warn "python3 pip is unavailable; skipping PySide6 installation"
+  fi
+else
+  warn "python3 interpreter is unavailable; skipping PySide6 installation"
+fi
 
 installed_node_version="not installed"
 
