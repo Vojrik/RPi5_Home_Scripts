@@ -12,6 +12,7 @@ What the script does
 - Zigbee2MQTT: triggers a coordinator backup through MQTT (topic zigbee2mqtt/bridge/request/backup), vytvoří konzistentní snapshot dat přes `rsync` do dočasného adresáře a z něj vyrobí .tar.gz archiv.
 - Home Assistant: nejprve zkusí přes API založit nativní HA Backup a nově vzniklý soubor zkopíruje do cílového adresáře; poté po ořezu starších nativních záloh vytvoří pomocí `rsync` neměnnou kopii celé konfigurace a z ní vytvoří .tar.gz.
 - OctoPrint: spustí oficiální příkaz `plugins backup:backup` a uloží výsledné .zip (nastavení, pluginy, profily atd.).
+  Záloha se spouští s explicitním `--basedir`, aby OctoPrint vždy pracoval s produkčním profilem i v případě, že cron běží pod uživatelem root.
 - Po dokončení každého balíčku smaže snapshot z dočasného adresáře a v cíli drží pouze nejnovějších 30 souborů v každé podsložce.
 
 Target directory layout
@@ -42,6 +43,7 @@ Restore procedure (summary)
 Script configuration hints
 - Backup destination: variable BACKUP_DIR near the top of the script
 - OctoPrint binary: variable OCTOPRINT_BIN (auto-detection is attempted as well)
+- OctoPrint basedir: variable OCTOPRINT_BASEDIR (výchozí `/home/<user>/.octoprint`); změňte jen pokud máte konfiguraci jinde
 - OctoPrint exclusions: variable OCTO_EXCLUDES (e.g. "timelapse uploads")
 - MQTT credentials for Z2M: read from /opt/home-automation/credentials/mqtt_password.txt (user 'ha')
 

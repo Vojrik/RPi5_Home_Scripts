@@ -38,6 +38,7 @@ MQTT_USER="ha"
 MQTT_PASS_FILE="/opt/home-automation/credentials/mqtt_password.txt"
 # OctoPrint
 OCTOPRINT_BIN="${OCTOPRINT_BIN:-$TARGET_HOME/OctoPrint/venv/bin/octoprint}"
+OCTOPRINT_BASEDIR="${OCTOPRINT_BASEDIR:-$TARGET_HOME/.octoprint}"
 OCTO_EXCLUDES=""   # leave empty to include everything in the backup
 
 # Home Assistant API for native "Backup" (if available)
@@ -211,7 +212,10 @@ fi
 
 if [ -x "$OCTOPRINT_BIN" ]; then
   OCTO_ARCHIVE="$BACKUP_DIR/octoprint/octoprint_${TIMESTAMP}.zip"
-  OCTO_ARGS=(plugins backup:backup --path "$OCTO_ARCHIVE")
+  if [ ! -d "$OCTOPRINT_BASEDIR" ]; then
+    echo "[WARN] OctoPrint basedir $OCTOPRINT_BASEDIR not found, skipping OctoPrint backup" >&2
+  else
+    OCTO_ARGS=(--basedir "$OCTOPRINT_BASEDIR" plugins backup:backup --path "$OCTO_ARCHIVE")
   # Add excludes as repeated flags if set
   for ex in $OCTO_EXCLUDES; do
     OCTO_ARGS=("${OCTO_ARGS[@]}" --exclude "$ex")
@@ -219,6 +223,7 @@ if [ -x "$OCTOPRINT_BIN" ]; then
   # Run backup; if it fails, continue with other backups already created
   if ! "$OCTOPRINT_BIN" "${OCTO_ARGS[@]}"; then
     echo "[WARN] OctoPrint backup command failed" >&2
+  fi
   fi
 else
   echo "[INFO] OctoPrint CLI not found, skipping OctoPrint backup" >&2
