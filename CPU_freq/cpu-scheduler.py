@@ -144,18 +144,32 @@ def set_fan_mode(mode: str):
             pass
 
 def cpu_usage_pct(interval: float):
+    """Return CPU busy percentage over the provided interval using /proc/stat."""
     def snap():
-        with open("/proc/stat") as f:
+        with open("/proc/stat", "r", encoding="ascii") as f:
             for line in f:
                 if line.startswith("cpu "):
                     parts = [int(x) for x in line.split()[1:]]
-                    idle = parts[3] + parts[4]; total = sum(parts)
-                    return idle, total
-    i1, t1 = snap(); time.sleep(interval); i2, t2 = snap()
-    dtotal = t2 - t1
-    if dtotal <= 0: return 0.0
-    didle = i2 - i1
-    return 100.0 * (1.0 - didle / dtotal)
+                    if len(parts) < 4:
+                        raise RuntimeError("Unexpected /proc/stat format")
+                    idle = parts[3]
+                    if len(parts) > 4:
+                        idle += parts[4]  # account for iowait
+                    total = sum(parts)
+                    return total, idle
+        raise RuntimeError("Missing cpu line in /proc/stat")
+
+    interval = max(0.05, float(interval))
+    total_1, idle_1 = snap()
+    time.sleep(interval)
+    total_2, idle_2 = snap()
+
+    total_delta = total_2 - total_1
+    if total_delta <= 0:
+        return 0.0
+    idle_delta = idle_2 - idle_1
+    usage = 100.0 * (1.0 - (idle_delta / total_delta))
+    return max(0.0, min(100.0, usage))
 
 def parse_hhmm(s: str): h,m=[int(x) for x in s.split(":")]; return h,m
 
