@@ -19,7 +19,6 @@ cmds = {
           "echo Uptime: $val",
     'temp': "cat /sys/class/thermal/thermal_zone0/temp",
     'ip': "hostname -I | awk '{printf \"IP %s\", $1}'",
-    'cpu': "uptime | awk '{printf \"CPU Load: %.2f %%\", $(NF-2)}'",
     'men': "free -m | awk 'NR==2{printf \"RAM: %s/%s MB\", $3,$2}'",
 
     'disk_root': "df -hP /        | awk 'NR==2{u=$3; t=$2; g=substr(t,length(t)); sub(/[A-Z]/,\"\",u); sub(/[A-Z]/,\"\",t); if(g==\"G\") g=\"GB\"; if(g==\"T\") g=\"TB\"; printf \"Root: %s/%s %s, %s\", u,t,g,$5}'",
@@ -35,6 +34,8 @@ def check_call(cmd):
     return subprocess.check_call(cmd, shell=True)
 
 def get_info(key):
+    if key == 'cpu':
+        return get_cpu_load()
     return check_output(cmds[key])
 
 def get_cpu_temp():
@@ -42,6 +43,42 @@ def get_cpu_temp():
     if conf['oled']['f-temp']:
         return "CPU Temp: {:.0f}°F".format(t * 1.8 + 32)
     return "CPU Temp: {:.1f}°C".format(t)
+
+_cpu_cache = {'time': 0.0, 'text': 'CPU Load: -- %'}
+
+def _read_cpu_times():
+    with open('/proc/stat', 'r', encoding='ascii') as fh:
+        line = fh.readline()
+    parts = line.split()
+    if not parts or parts[0] != 'cpu':
+        raise RuntimeError("Unexpected /proc/stat format")
+    values = [int(v) for v in parts[1:]]
+    idle = values[3]
+    if len(values) > 4:
+        idle += values[4]  # include iowait in idle bucket
+    total = sum(values)
+    return total, idle
+
+def get_cpu_load():
+    now = time.time()
+    if now - _cpu_cache['time'] < 1.0:
+        return _cpu_cache['text']
+
+    total_1, idle_1 = _read_cpu_times()
+    time.sleep(0.1)
+    total_2, idle_2 = _read_cpu_times()
+
+    total_delta = total_2 - total_1
+    idle_delta = idle_2 - idle_1
+    if total_delta <= 0:
+        usage = 0.0
+    else:
+        usage = max(0.0, min(100.0, 100.0 * (1.0 - (idle_delta / total_delta))))
+
+    text = "CPU Load: {:.0f} %".format(usage)
+    _cpu_cache['time'] = now
+    _cpu_cache['text'] = text
+    return text
 
 # ------ Konfigurace ------
 def read_conf():
