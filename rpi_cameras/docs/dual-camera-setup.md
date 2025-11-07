@@ -1,64 +1,64 @@
-# Dual camera configuration (Raspberry Pi 5)
+# Dual Camera Configuration (Raspberry Pi 5)
 
-Tyto poznámky popisují aktuální softwarový MJPEG portál postavený nad `soft-stream.py`. Server běží na Raspberry Pi 5, obsluhuje dvě CSI kamery a vystavuje rozhraní pro OctoPrint/hlídací náhledy na portech 8081 (CAM0) a 8082 (CAM1).
+These notes describe the current software MJPEG portal built on top of `soft-stream.py`. The service runs on a Raspberry Pi 5, serves two CSI cameras, and exposes OctoPrint/facility previews on ports 8081 (CAM0) and 8082 (CAM1).
 
-## Požadavky
+## Requirements
 
-1. Zajisti Picamera2 stack z Raspberry Pi OS (balík `python3-picamera2` přetahuje i `libcamera`).  
-2. Kamerové moduly musí být detekované příkazem:
+1. Install the Picamera2 stack from Raspberry Pi OS (the `python3-picamera2` package pulls in `libcamera`).  
+2. Confirm both sensors are visible:
    ```bash
    libcamera-still --list-cameras
    ```
-   Pořadí výpisu určuje hodnoty `cam0_index`/`cam1_index` v env souboru.
-3. Služby očekávají, že k dispozici je `/home/vojrik/Scripts/rpi_cameras` (spravuje tento repozitář) a `/etc/camera-streamer/` s konfigurací.
+   The order of the list determines `cam0_index` / `cam1_index` in the environment file.
+3. Ensure `/home/vojrik/Scripts/rpi_cameras` (this repository) and `/etc/camera-streamer/` (host-specific config) exist on the target Pi.
 
-## Nasazení / aktualizace
+## Deployment / Updates
 
-1. Uprav `systemd/camera-soft-stream.env` podle požadovaného rozlišení, FPS, kvality a fokus režimu.
-2. Z kořene repozitáře spusť:
+1. Edit `systemd/camera-soft-stream.env` to set resolution, FPS, quality, autofocus, and snapshot parameters.
+2. From the repo root run:
    ```bash
    cd ~/Scripts/rpi_cameras
    ./deploy-soft-stream.sh
    ```
-   Skript zkopíruje `soft-stream.py`, `measure_fps.py` a `README.md` do běhového adresáře, obnoví `/etc/camera-streamer/camera-soft-stream.env`, nahraje jednotky `camera-soft-cam{0,1}.service` a provede `systemctl daemon-reload && enable --now`.
-3. Ověř, že služby běží:
+   The helper copies `soft-stream.py`, `measure_fps.py`, and `README.md` into the runtime directory, refreshes `/etc/camera-streamer/camera-soft-stream.env`, installs `camera-soft-cam{0,1}.service`, and finishes with `systemctl daemon-reload && enable --now`.
+3. Verify both services are active:
    ```bash
    systemctl status camera-soft-cam0.service
    systemctl status camera-soft-cam1.service
    ```
 
-## Ověření provozu
+## Operational Validation
 
-- Otevři `http://<pi>:8081/` (CAM0) a `http://<pi>:8082/` (CAM1). Landing page nabízí odkazy na `stream.mjpg` a `snapshot.jpg`.  
-- `curl http://<pi>:8081/stream.mjpg --output /dev/null` během několika sekund potvrdí, že server posílá multipart MJPEG data.  
-- Pro FPS měření použij bundled nástroj:
+- Visit `http://<pi>:8081/` (CAM0) and `http://<pi>:8082/` (CAM1); the landing page links to `stream.mjpg` and `snapshot.jpg`.  
+- `curl http://<pi>:8081/stream.mjpg --output /dev/null` should start receiving multipart MJPEG data almost immediately.  
+- To measure FPS, use the bundled tool:
   ```bash
   python3 /home/vojrik/Scripts/rpi_cameras/measure_fps.py http://127.0.0.1:8082/stream.mjpg --frames 150
   ```
-- Logy k autofocusu a (ne)dostupnosti kamery sleduj přes `journalctl -u camera-soft-camX.service -n 50`.
+- Track autofocus events and camera availability via `journalctl -u camera-soft-camX.service -n 50`.
 
-## Konfigurace env souboru
+## Environment File Layout
 
-`systemd/camera-soft-stream.env` obsahuje sekce `cam0_*` a `cam1_*`:
+`systemd/camera-soft-stream.env` provides separate `cam0_*` and `cam1_*` sections:
 
-- `camX_index` – pořadí podle `Picamera2.global_camera_info()`.
-- `camX_width`, `camX_height`, `camX_fps` – parametry pro MJPEG stream; skript loguje vyjednané rozlišení, pokud HW vynutí změnu.
-- `camX_port` – HTTP port (standardně 8081 / 8082).  
-- `camX_snapshot_*` – parametry jednorázových snímků, které se pořizují mimo běžící stream.  
-- `camX_autofocus` – zapíná volání `autofocus_cycle()` před startem streamu a před snapshotem.
+- `camX_index` – index reported by `Picamera2.global_camera_info()`.
+- `camX_width`, `camX_height`, `camX_fps` – stream parameters; the script logs the negotiated resolution when hardware tweaks it.
+- `camX_port` – HTTP port (defaults: 8081 / 8082).  
+- `camX_snapshot_*` – still capture resolution/quality used when no stream is running.  
+- `camX_autofocus` – enables `autofocus_cycle()` before stream start and before snapshots.
 
-Po úpravách env souboru stačí restartovat služby:
+After editing the file, restart both services:
 ```bash
 sudo systemctl restart camera-soft-cam0.service camera-soft-cam1.service
 ```
 
-## Odstraňování problémů
+## Troubleshooting
 
-- **Chybějící kamera** – pokud není připojena, server skončí s kódem 66 a systemd jednotka zůstane ve stavu `inactive (dead)`. Po připojení kabelu stačí `sudo systemctl restart camera-soft-camX.service`.  
-- **Autofocus timeout** – sleduj logy; případně nastav `camX_autofocus=0` a ostři ručně.  
-- **Nesprávné rozlišení** – log hlásí, když Picamera2 vynutí jiné rozlišení. Uprav `camX_width`/`height` na hodnotu, kterou kamera/ISP reálně podporuje.  
-- **Port obsazený jinou službou** – změň `camX_port` a spusť deploy skript, aby se aktualizace propsala i do systemd jednotek.
+- **Missing camera** – when a sensor is absent, the server exits with code 66 and the unit stays `inactive (dead)`. Reconnect the ribbon cable and run `sudo systemctl restart camera-soft-camX.service`.  
+- **Autofocus timeouts** – check logs; if the lens keeps failing, set `camX_autofocus=0` and adjust focus manually.  
+- **Unexpected resolution** – Picamera2 logs when the ISP enforces a different size. Update `camX_width`/`height` to a supported value.  
+- **Port collision** – adjust `camX_port` in the env file and rerun the deploy script so unit files are updated as well.
 
-## Legacy poznámka
+## Legacy Note
 
-Původní build `camera-streamer` s WebRTC endpointy jsme na Pi 5 opustili (žádný HW H.264). Soubory zůstávají jen jako historická reference ve staré větvi (`/home/vojrik/camera-streamer`). Nový repozitář obsahuje čistě soft-MJPEG řešení popsané výše.
+The original `camera-streamer` + WebRTC build is no longer used on the Pi 5 (no HW H.264). Those files live only as historical references in `/home/vojrik/camera-streamer`. The current repository focuses solely on the soft-MJPEG workflow described above.
