@@ -1,0 +1,25 @@
+[Unit]
+Description=Software MJPEG stream for CAM1
+After=dev-video1.device network.target
+BindsTo=dev-video1.device
+
+[Service]
+EnvironmentFile=/etc/camera-streamer/camera-soft-stream.env
+ExecStart=/usr/bin/python3 /home/vojrik/Scripts/rpi_cameras/soft-stream.py \
+  --camera-index=${cam1_index} \
+  --width=${cam1_width} \
+  --height=${cam1_height} \
+  --framerate=${cam1_fps} \
+  --port=${cam1_port} \
+  --quality=${cam1_quality} \
+  --name="${cam1_name}" \
+  --snapshot-width=${cam1_snapshot_width} \
+  --snapshot-height=${cam1_snapshot_height} \
+  --snapshot-quality=${cam1_snapshot_quality} \
+  --autofocus=${cam1_autofocus}
+Restart=on-failure
+RestartPreventExitStatus=66
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
