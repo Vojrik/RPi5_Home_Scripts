@@ -3,31 +3,31 @@
 
 import time
 import sys
-import os
-import fan_pwm  # our module with init_pwm, set_fan_speed, stop_pwm
+import fan_pwm  # must provide: init_pwm(freq_hz), set_fan_speed(duty_pct), stop_pwm(), gpio_low()
 
 # === Settings ===
-WAIT_TIME = 2
-FAN_MIN = 0
-PWM_FREQ = 20000  # Hz for 3-pin DC fans; use 25000 for 4-pin PC fans
-MODE_FILE = "/run/fan_mode"  # contents: "normal" or "silent"
-hyst = 1
+WAIT_TIME = 2.0
+PWM_FREQ = 20000            # Hz for 3-pin DC; 25000 for 4-pin
+MODE_FILE = "/run/fan_mode" # "normal" / "silent"
+HYST = 2.0                  # °C
 
-tempSteps = [40, 44.99, 45, 47, 50, 54.99, 55, 58, 61, 64, 67, 70]
-speedSteps_normal = [19, 19, 19.5, 20, 22, 25, 25, 30, 35, 40, 60, 100]
-speedSteps_silent = [0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 19, 19.5, 20, 21]
-# speedSteps_silent = [0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 19, 20, 22, 25, 30]
+# Duty policy
+FAN_MIN_DUTY = 23.0         # % that reliably keeps fan spinning (tune to your fan)
+FAN_OFF_DUTY = 0.01         # % used instead of a raw zero (hardware keeps fan at max on 0)
+FAN_KICK_DUTY = 24.0       # % kick-start
+FAN_KICK_MS = 500           # ms
 
-profiles = {
-    "normal": speedSteps_normal,
-    "silent": speedSteps_silent,
-}
+# Curves
+tempSteps =             [40,    44.99,  45,     47,     49.99,  50,     54.99,  55,     58,     61,     64,     67,     70,     73]
+speedSteps_normal =     [0,     0,      0,      0,      0,      23,     25,     27,     30,     35,     40,     45,     50,     100]
+speedSteps_silent =     [0,     0,      0,      0,      0,      0,      0,      23,     24,     25,     26,     27,     28,     35]
+profiles = {"normal": speedSteps_normal, "silent": speedSteps_silent}
 
 # === State ===
-cpuTempOld = 0.0
-fanSpeedOld = 0.0
-firstRun = True
+cpu_ref = None
 last_mode = None
+pwm_enabled = False
+fanDutyOld = -1.0
 
 def read_mode():
     try:
@@ -37,66 +37,96 @@ def read_mode():
     except FileNotFoundError:
         return "normal"
 
+def clamp(v, lo, hi):
+    return hi if v > hi else lo if v < lo else v
+
 def interp_speed(t, temps, speeds):
     if t < temps[0]:
-        return speeds[0]
+        return float(speeds[0])
     if t >= temps[-1]:
-        return speeds[-1]
-    # Linear interpolation between each pair of points
-    for i in range(len(temps) - 1):
-        if temps[i] <= t < temps[i + 1]:
-            return round(
-                (speeds[i + 1] - speeds[i])
-                / (temps[i + 1] - temps[i])
-                * (t - temps[i])
-                + speeds[i],
-                1,
-            )
-    return speeds[-1]
+        return float(speeds[-1])
+    for i in range(len(temps)-1):
+        a, b = temps[i], temps[i+1]
+        if a <= t < b:
+            sa, sb = float(speeds[i]), float(speeds[i+1])
+            return round((sb-sa)/(b-a)*(t-a)+sa, 1)
+    return float(speeds[-1])
 
-# sanity check
+def ensure_pwm_enabled():
+    global pwm_enabled
+    if not pwm_enabled:
+        fan_pwm.init_pwm(freq_hz=PWM_FREQ)
+        pwm_enabled = True
+
+def disable_pwm():
+    global pwm_enabled
+    if pwm_enabled:
+        # stop PWM clock and force pin low (fan completely off)
+        try:
+            fan_pwm.stop_pwm()
+        finally:
+            # optional: if your fan_pwm exposes gpio_low(), set the pin to 0
+            if hasattr(fan_pwm, "gpio_low"):
+                fan_pwm.gpio_low()
+        pwm_enabled = False
+
+# sanity checks
 if len(speedSteps_normal) != len(tempSteps) or len(speedSteps_silent) != len(tempSteps):
-    print("The number of temperature and speed steps does not match!")
+    print("The number of temperature and speed steps does not match!", file=sys.stderr)
+    sys.exit(1)
+if not all(tempSteps[i] < tempSteps[i+1] for i in range(len(tempSteps)-1)):
+    print("tempSteps must be strictly increasing!", file=sys.stderr)
     sys.exit(1)
 
 try:
-    fan_pwm.init_pwm(freq_hz=PWM_FREQ)
-
+    # Lazy enable: až když je potřeba >0 %
     while True:
-        # Mode supplied from the outside world
         mode = read_mode()
         speeds = profiles[mode]
-
-        if mode != last_mode:
+        mode_changed = (mode != last_mode)
+        if mode_changed:
             print(f"Mode: {mode}")
             last_mode = mode
+            cpu_ref = None  # force recompute
 
-        # CPU temperature
         with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
-            cpuTemp = float(f.read()) / 1000.0
+            cpu = float(f.read().strip()) / 1000.0
 
-        # Compute fan speed with hysteresis
-        if firstRun or abs(cpuTemp - cpuTempOld) > hyst:
-            fanSpeed = interp_speed(cpuTemp, tempSteps, speeds)
+        if cpu_ref is None or abs(cpu - cpu_ref) > HYST or mode_changed:
+            target = clamp(interp_speed(cpu, tempSteps, speeds), 0.0, 100.0)
 
-            if fanSpeed != fanSpeedOld and (fanSpeed >= FAN_MIN or fanSpeed == 0):
-                fan_pwm.set_fan_speed(fanSpeed)
-                fanSpeedOld = fanSpeed
+            if target <= 0.0:
+                # keep PWM active and set a tiny duty so the fan is actually off
+                ensure_pwm_enabled()
+                if FAN_OFF_DUTY != fanDutyOld:
+                    fan_pwm.set_fan_speed(FAN_OFF_DUTY)
+                    fanDutyOld = FAN_OFF_DUTY
+            else:
+                # enable PWM if needed, do kick-start if we were OFF
+                was_off = not pwm_enabled
+                ensure_pwm_enabled()
 
-            cpuTempOld = cpuTemp
-            firstRun = False
+                duty = max(target, FAN_MIN_DUTY)
+                if was_off:
+                    fan_pwm.set_fan_speed(FAN_KICK_DUTY)
+                    time.sleep(FAN_KICK_MS/1000.0)
 
-        # print(f"{mode} | CPU: {cpuTemp:.1f} °C | Duty: {fanSpeedOld:.1f} %")
+                if duty != fanDutyOld:
+                    fan_pwm.set_fan_speed(duty)
+                    fanDutyOld = duty
+
+            cpu_ref = cpu
 
         time.sleep(WAIT_TIME)
 
 except KeyboardInterrupt:
     print("Fan ctrl interrupted by keyboard")
-    fan_pwm.stop_pwm()
-    sys.exit(0)
-except Exception as e:
-    # Ensure the PWM controller is disabled even on errors
     try:
-        fan_pwm.stop_pwm()
+        disable_pwm()
+    finally:
+        sys.exit(0)
+except Exception:
+    try:
+        disable_pwm()
     finally:
         raise
