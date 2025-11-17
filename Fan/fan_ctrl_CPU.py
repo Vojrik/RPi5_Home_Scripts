@@ -9,7 +9,7 @@ import fan_pwm  # must provide: init_pwm(freq_hz), set_fan_speed(duty_pct), stop
 WAIT_TIME = 2.0
 PWM_FREQ = 20000            # Hz for 3-pin DC; 25000 for 4-pin
 MODE_FILE = "/run/fan_mode" # "normal" / "silent"
-HYST = 2.0                  # °C
+HYST = 1.0                  # °C
 
 # Duty policy
 FAN_MIN_DUTY = 23.0         # % that reliably keeps fan spinning (tune to your fan)
@@ -19,7 +19,7 @@ FAN_KICK_MS = 500           # ms
 
 # Curves
 tempSteps =             [40,    44.99,  45,     47,     49.99,  50,     54.99,  55,     58,     61,     64,     67,     70,     73]
-speedSteps_normal =     [0,     0,      0,      0,      0,      23,     25,     27,     30,     35,     40,     45,     50,     100]
+speedSteps_normal =     [0,     0,      0,      0,      0,      23,     23,     25,     27,     30,     35,     40,    45,     100]
 speedSteps_silent =     [0,     0,      0,      0,      0,      0,      0,      23,     24,     25,     26,     27,     28,     35]
 profiles = {"normal": speedSteps_normal, "silent": speedSteps_silent}
 
