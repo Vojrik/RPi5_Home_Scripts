@@ -256,7 +256,7 @@ class CameraManager:
                     logging.info('Kamera %s běží na požadovaném rozlišení %dx%d', self.name, actual_size[0], actual_size[1])
                 self._picam2.start()
                 self._enable_autofocus(mode=controls.AfModeEnum.Continuous)
-                self._run_autofocus_cycle(wait=1.5, resume_continuous=True)
+                self._run_autofocus_cycle(wait=3.0, resume_continuous=True)
                 self._picam2.start_recording(MJPEGEncoder(), FileOutput(self.output), quality=self.quality)
                 self._streaming = True
 
