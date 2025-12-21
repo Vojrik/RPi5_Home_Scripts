@@ -3,7 +3,7 @@
 Quick MJPEG frame-rate probe.
 
 Usage:
-    tests/webrtc/measure_fps.py http://127.0.0.1:8081/stream.mjpg --frames 150
+    tests/webrtc/measure_fps.py http://127.0.0.1:18081/stream.mjpg --frames 150
 """
 import argparse
 import time

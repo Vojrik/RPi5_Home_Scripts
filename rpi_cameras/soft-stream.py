@@ -373,7 +373,7 @@ def probe_camera(index: int, camera_id: Optional[str] = None) -> bool:
     return True
 
 
-def serve(manager: CameraManager, port: int):
+def serve(manager: CameraManager, port: int, bind_host: str):
     class StreamingHandler(server.BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path == "/":
@@ -465,7 +465,7 @@ def serve(manager: CameraManager, port: int):
         def log_message(self, format, *args):
             logging.info("%s - %s", self.address_string(), format % args)
 
-    address = ("0.0.0.0", port)
+    address = (bind_host, port)
     httpd = server.ThreadingHTTPServer(address, StreamingHandler)
     logging.info("Serving %s on http://%s:%d", manager.name, address[0], port)
     try:
@@ -482,6 +482,7 @@ def main():
     parser.add_argument("--height", type=int, default=720, help="Výška obrazu")
     parser.add_argument("--framerate", type=int, default=15, help="Snímková frekvence")
     parser.add_argument("--port", type=int, required=True, help="HTTP port")
+    parser.add_argument("--bind", type=str, default="0.0.0.0", help="Bind address (default 0.0.0.0)")
     parser.add_argument(
         "--quality",
         type=str,
@@ -521,7 +522,7 @@ def main():
         autofocus=bool(args.autofocus),
         camera_id=args.camera_id,
     )
-    serve(manager, args.port)
+    serve(manager, args.port, args.bind)
 
 
 if __name__ == "__main__":

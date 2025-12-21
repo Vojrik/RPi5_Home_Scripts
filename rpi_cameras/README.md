@@ -4,7 +4,7 @@ This directory contains the lightweight MJPEG portal used for the two CSI camera
 
 ## Contents
 - `soft-stream.py` – HTTP portal serving the landing page, `/stream.mjpg`, `/snapshot.jpg` and a WebRTC notice. It lazily opens the requested camera, keeps the feed running only while clients are connected and handles autofocus cycles before streaming and before out-of-band snapshots.
-- `measure_fps.py` – simple MJPEG FPS probe (`python3 measure_fps.py http://pi:8081/stream.mjpg`).
+- `measure_fps.py` – simple MJPEG FPS probe (`python3 measure_fps.py http://127.0.0.1:18081/stream.mjpg`).
 - `systemd/` – unit files and environment template (`camera-soft-stream.env`). Units are bound to `/dev/video*` and honour exit code `66` when a camera is missing.
 - `deploy-soft-stream.sh` – helper invoked from the repository root to copy scripts, refresh `/etc/camera-streamer/*.env` files and restart the services.
 
@@ -49,14 +49,13 @@ Look for autofocus messages (`Autofocus cycle …`) and resolution logs to confi
 ## Measuring Stream Performance
 ```bash
 python3 /home/vojrik/Scripts/rpi_cameras/measure_fps.py \
-  http://127.0.0.1:8082/stream.mjpg --frames 150
+  http://127.0.0.1:18082/stream.mjpg --frames 150
 ```
-Swap the port to `8081` for CAM0. The utility counts multipart frame boundaries and prints the observed FPS.
+Swap the port to `18081` for CAM0. The utility counts multipart frame boundaries and prints the observed FPS.
 
 ## Snapshot Usage
-- `http://<pi>:808X/stream.mjpg` – continuous MJPEG stream (camera powered only while clients are connected).
-- `http://<pi>:808X/snapshot.jpg` – captures a high-resolution still; when the camera is idle the script opens it, runs an autofocus cycle and returns a fresh JPEG.
-- `http://<pi>:808X/` – landing page with configuration hints and quick links.
+- External (via nginx auth): `http://<pi>:808X/stream.mjpg`, `http://<pi>:808X/snapshot.jpg`, `http://<pi>:808X/`.
+- Internal (loopback only): `http://127.0.0.1:1808X/stream.mjpg`, `http://127.0.0.1:1808X/snapshot.jpg`, `http://127.0.0.1:1808X/`.
 
 ## Filesystem Layout Summary
 ```

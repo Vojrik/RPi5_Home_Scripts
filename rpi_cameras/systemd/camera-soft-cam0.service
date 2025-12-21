@@ -11,6 +11,7 @@ ExecStart=/usr/bin/python3 /home/vojrik/Scripts/rpi_cameras/soft-stream.py \
   --height=${cam0_height} \
   --framerate=${cam0_fps} \
   --port=${cam0_port} \
+  --bind=${cam0_bind} \
   --quality=${cam0_quality} \
   --name="${cam0_name}" \
   --snapshot-width=${cam0_snapshot_width} \

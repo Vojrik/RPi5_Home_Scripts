@@ -1,6 +1,6 @@
 # Dual Camera Configuration (Raspberry Pi 5)
 
-These notes describe the current software MJPEG portal built on top of `soft-stream.py`. The service runs on a Raspberry Pi 5, serves two CSI cameras, and exposes OctoPrint/facility previews on ports 8081 (CAM0) and 8082 (CAM1).
+These notes describe the current software MJPEG portal built on top of `soft-stream.py`. The service runs on a Raspberry Pi 5, serves two CSI cameras, and exposes OctoPrint/facility previews via nginx on ports 8081 (CAM0) and 8082 (CAM1) while the internal services listen on 18081/18082.
 
 ## Requirements
 
@@ -29,11 +29,11 @@ These notes describe the current software MJPEG portal built on top of `soft-str
 
 ## Operational Validation
 
-- Visit `http://<pi>:8081/` (CAM0) and `http://<pi>:8082/` (CAM1); the landing page links to `stream.mjpg` and `snapshot.jpg`.  
-- `curl http://<pi>:8081/stream.mjpg --output /dev/null` should start receiving multipart MJPEG data almost immediately.  
+- Visit `http://<pi>:8081/` (CAM0) and `http://<pi>:8082/` (CAM1) through nginx; the landing page links to `stream.mjpg` and `snapshot.jpg`.  
+- `curl http://<pi>:8081/stream.mjpg --output /dev/null` should start receiving multipart MJPEG data almost immediately (nginx auth applies).  
 - To measure FPS, use the bundled tool:
   ```bash
-  python3 /home/vojrik/Scripts/rpi_cameras/measure_fps.py http://127.0.0.1:8082/stream.mjpg --frames 150
+  python3 /home/vojrik/Scripts/rpi_cameras/measure_fps.py http://127.0.0.1:18082/stream.mjpg --frames 150
   ```
 - Track autofocus events and camera availability via `journalctl -u camera-soft-camX.service -n 50`.
 
@@ -43,7 +43,7 @@ These notes describe the current software MJPEG portal built on top of `soft-str
 
 - `camX_index` – index reported by `Picamera2.global_camera_info()`.
 - `camX_width`, `camX_height`, `camX_fps` – stream parameters; the script logs the negotiated resolution when hardware tweaks it.
-- `camX_port` – HTTP port (defaults: 8081 / 8082).  
+- `camX_port` – internal HTTP port (defaults: 18081 / 18082).  
 - `camX_snapshot_*` – still capture resolution/quality used when no stream is running.  
 - `camX_autofocus` – enables `autofocus_cycle()` before stream start and before snapshots.
 
