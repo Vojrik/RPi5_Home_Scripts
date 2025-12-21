@@ -18,9 +18,9 @@ FAN_KICK_DUTY = 24.0       # % kick-start
 FAN_KICK_MS = 500           # ms
 
 # Curves
-tempSteps =             [40,    44.99,  45,     47,     49.99,  50,     54.99,  55,     58,     61,     64,     67,     70,     73]
-speedSteps_normal =     [0,     0,      0,      0,      0,      23,     23,     25,     27,     30,     35,     40,    45,     100]
-speedSteps_silent =     [0,     0,      0,      0,      0,      0,      0,      23,     24,     25,     26,     27,     28,     35]
+tempSteps =             [40,    44.99,  45,     47,     49.99,  50,     54.99,  55,     58,     59.99,  60,     64,     67,     70,     73]
+speedSteps_normal =     [0,     0,      0,      0,      0,      23,     23,     25,     27,     30,     30,     35,     40,     45,     100]
+speedSteps_silent =     [0,     0,      0,      0,      0,      0,      0,      0,      0,      0,      23.5,   24,     25,     28,     35]
 profiles = {"normal": speedSteps_normal, "silent": speedSteps_silent}
 
 # === State ===
