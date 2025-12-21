@@ -91,40 +91,40 @@ PAGE_TEMPLATE = """\
   </head>
   <body>
     <header>
-      <h1>{name} – Camera Portal</h1>
-      <p>Softwarový MJPEG – stream se spouští jen při otevřené stránce. Když okno zavřeš, kamera se odpojí a zátěž CPU spadne.</p>
+      <h1>{name} - Camera Portal</h1>
+      <p>Software MJPEG - the stream starts only while the page is open. When you close the window, the camera disconnects and CPU load drops.</p>
     </header>
     <main>
       <section class="details">
-        <div><span class="badge">Rozlišení</span>{width}×{height}</div>
-        <div><span class="badge">Snímková frekvence</span>{fps} fps</div>
+        <div><span class="badge">Resolution</span>{width}x{height}</div>
+        <div><span class="badge">Frame rate</span>{fps} fps</div>
         <div><span class="badge">Kvalita</span>{quality}</div>
         <div><span class="badge">Port</span>{port}</div>
       </section>
       <section class="cards">
         <article class="card">
           <h2>MJPEG</h2>
-          <p>Živý stream běžící jen při otevřeném klientovi.</p>
+          <p>Live stream runs only while a client is connected.</p>
           <p><a href="stream.mjpg">stream.mjpg</a></p>
         </article>
         <article class="card">
           <h2>Snapshot</h2>
-          <p>Jednorázový snímek JPG – při neaktivním streamu se pořídí plné rozlišení {snap_width}×{snap_height} (quality {snap_quality}).</p>
+          <p>One-shot JPG snapshot - when the stream is idle it captures full resolution {snap_width}x{snap_height} (quality {snap_quality}).</p>
           <p><a href="snapshot.jpg">snapshot.jpg</a></p>
         </article>
         <article class="card">
           <h2>WebRTC</h2>
-          <p>RP1 nemá HW H.264/MJPEG enkodér. WebRTC profil camera-streameru proto na Pi 5 nejede.</p>
-          <p><a href="webrtc">více informací</a></p>
+          <p>RP1 has no HW H.264/MJPEG encoder. The camera-streamer WebRTC profile does not run on Pi 5.</p>
+          <p><a href="webrtc">more info</a></p>
         </article>
         <article class="card">
           <h2>Konfigurace</h2>
-          <p>Uprav soubor <code>/etc/camera-streamer/camera-soft-stream.env</code> a udělej restart služby:</p>
+          <p>Edit <code>/etc/camera-streamer/camera-soft-stream.env</code> and restart the service:</p>
           <p><code>sudo systemctl restart camera-soft-cam0.service</code></p>
         </article>
       </section>
       <footer>
-        <p>Trvalé softwarové řešení – parametry (rozlišení, FPS, kvalita) lze měnit v env souboru a následně restartovat služby.</p>
+        <p>Permanent software solution - parameters (resolution, FPS, quality) can be changed in the env file and then restart services.</p>
       </footer>
     </main>
   </body>
@@ -252,9 +252,9 @@ class CameraManager:
                 self._picam2.configure(self._video_config)
                 actual_size = tuple(self._picam2.camera_configuration()['main']['size'])
                 if actual_size != (self.width, self.height):
-                    logging.warning('Kamera %s upravila rozlišení na %dx%d (požadováno %dx%d)', self.name, actual_size[0], actual_size[1], self.width, self.height)
+                    logging.warning('Camera %s adjusted resolution to %dx%d (requested %dx%d)', self.name, actual_size[0], actual_size[1], self.width, self.height)
                 else:
-                    logging.info('Kamera %s běží na požadovaném rozlišení %dx%d', self.name, actual_size[0], actual_size[1])
+                    logging.info('Camera %s runs at requested resolution %dx%d', self.name, actual_size[0], actual_size[1])
                 self._picam2.start()
                 self._enable_autofocus(mode=controls.AfModeEnum.Continuous)
                 self._run_autofocus_cycle(wait=3.0, resume_continuous=True)
@@ -327,15 +327,15 @@ def resolve_camera_index(camera_id: Optional[str], fallback_index: int) -> Optio
     try:
         infos = Picamera2.global_camera_info()
     except Exception as exc:
-        logging.error("Nedokážu načíst seznam kamer: %s", exc)
+        logging.error("Unable to read camera list: %s", exc)
         return None
 
     if camera_id:
         for idx, info in enumerate(infos or []):
             if isinstance(info, dict) and info.get("Id") == camera_id:
-                logging.info("Kamera s ID %s nalezena na indexu %d.", camera_id, idx)
+                logging.info("Camera with ID %s found at index %d.", camera_id, idx)
                 return idx
-        logging.warning("Kamera s ID %s nebyla nalezena.", camera_id)
+        logging.warning("Camera with ID %s was not found.", camera_id)
         return None
 
     return fallback_index
@@ -345,19 +345,19 @@ def probe_camera(index: int, camera_id: Optional[str] = None) -> bool:
     try:
         infos = Picamera2.global_camera_info()
     except Exception as exc:
-        logging.error("Nedokážu načíst seznam kamer: %s", exc)
+        logging.error("Unable to read camera list: %s", exc)
         return False
 
     if index < 0:
         return False
 
     if not infos or index >= len(infos):
-        logging.warning("Požadovaná kamera s indexem %d nebyla nalezena.", index)
+        logging.warning("Requested camera with index %d was not found.", index)
         return False
 
     info = infos[index] or {}
     if isinstance(info, dict) and info.get('Unavailable'):
-        logging.warning("Kamera s indexem %d je označena jako nedostupná.", index)
+        logging.warning("Camera with index %d is marked unavailable.", index)
         return False
 
     try:
@@ -439,11 +439,11 @@ def serve(manager: CameraManager, port: int, bind_host: str):
 
             if self.path == "/webrtc":
                 message = (
-                    "<html><head><title>WebRTC nedostupné</title></head>"
-                    "<body><h1>WebRTC není podporováno</h1>"
-                    "<p>RP1 čip Raspberry Pi 5 nemá zabudovaný hardwarový H.264/MJPEG enkodér, "
-                    "takže původní WebRTC pipeline camera-streameru nemůže běžet.</p>"
-                    "<p>Aktuální instance poskytuje pouze softwarový MJPEG stream.</p>"
+                    "<html><head><title>WebRTC unavailable</title></head>"
+                    "<body><h1>WebRTC not supported</h1>"
+                    "<p>The RP1 chip in Raspberry Pi 5 has no built-in H.264/MJPEG hardware encoder, "
+                    "so the original camera-streamer WebRTC pipeline cannot run.</p>"
+                    "<p>This instance provides only a software MJPEG stream.</p>"
                     "</body></html>"
                 ).encode("utf-8")
                 self.send_response(HTTPStatus.OK)
@@ -477,10 +477,10 @@ def serve(manager: CameraManager, port: int, bind_host: str):
 def main():
     parser = argparse.ArgumentParser(description="Software MJPEG streaming portal for Picamera2.")
     parser.add_argument("--camera-index", type=int, default=0, help="Index kamery (default 0)")
-    parser.add_argument("--camera-id", type=str, default=None, help="Persistentní ID kamery z Picamera2.global_camera_info()")
-    parser.add_argument("--width", type=int, default=1280, help="Šířka obrazu")
-    parser.add_argument("--height", type=int, default=720, help="Výška obrazu")
-    parser.add_argument("--framerate", type=int, default=15, help="Snímková frekvence")
+    parser.add_argument("--camera-id", type=str, default=None, help="Persistent camera ID from Picamera2.global_camera_info()")
+    parser.add_argument("--width", type=int, default=1280, help="Image width")
+    parser.add_argument("--height", type=int, default=720, help="Image height")
+    parser.add_argument("--framerate", type=int, default=15, help="Frame rate")
     parser.add_argument("--port", type=int, required=True, help="HTTP port")
     parser.add_argument("--bind", type=str, default="0.0.0.0", help="Bind address (default 0.0.0.0)")
     parser.add_argument(
@@ -491,22 +491,22 @@ def main():
         help="Profil kvality MJPEG"
     )
     parser.add_argument("--name", type=str, default="Camera", help="Popisek kamery")
-    parser.add_argument("--snapshot-width", type=int, default=0, help="Šířka snapshotu (0 = stejné jako stream)")
-    parser.add_argument("--snapshot-height", type=int, default=0, help="Výška snapshotu (0 = stejné jako stream)")
+    parser.add_argument("--snapshot-width", type=int, default=0, help="Snapshot width (0 = same as stream)")
+    parser.add_argument("--snapshot-height", type=int, default=0, help="Snapshot height (0 = same as stream)")
     parser.add_argument("--snapshot-quality", type=int, default=95, help="JPEG kvalita snapshotu (1-100)")
-    parser.add_argument("--autofocus", type=int, choices=[0, 1], default=0, help="Povolit kontinuální autofocus (1 = ano)")
+    parser.add_argument("--autofocus", type=int, choices=[0, 1], default=0, help="Enable continuous autofocus (1 = yes)")
     args = parser.parse_args()
 
     if not 1 <= args.snapshot_quality <= 100:
-        parser.error("Snapshot kvalita musí být v rozsahu 1-100.")
+        parser.error("Snapshot quality must be in range 1-100.")
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     effective_index = resolve_camera_index(args.camera_id, args.camera_index)
     if effective_index is None or not probe_camera(effective_index, args.camera_id):
         if args.camera_id:
-            logging.error("Kamera s ID %s není dostupná. Spusť službu až po připojení požadované kamery.", args.camera_id)
+            logging.error("Camera with ID %s is unavailable. Start the service after the requested camera is connected.", args.camera_id)
         else:
-            logging.error("Kamera s indexem %d není dostupná. Spusť službu až po připojení kamery.", args.camera_index)
+            logging.error("Camera with index %d is unavailable. Start the service after the camera is connected.", args.camera_index)
         sys.exit(EXIT_NO_CAMERA)
 
     manager = CameraManager(

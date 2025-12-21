@@ -228,7 +228,7 @@ def daemon_loop():
     cfg=load_cfg(); global FAN_MODE_PATH; FAN_MODE_PATH=cfg["fan_mode_path"]
     log("START daemon")
 
-    # init: nastav profil podle dne/noci
+    # init: set profile based on day/night
     now0=datetime.datetime.now()
     if in_night(now0,cfg["night_start"],cfg["night_end"]):
         ensure_governor(cfg["idle_governor"])

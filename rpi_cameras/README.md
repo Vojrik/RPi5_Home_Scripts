@@ -10,7 +10,7 @@ This directory contains the lightweight MJPEG portal used for the two CSI camera
 
 ## Deployment / Updates
 1. Adjust `systemd/camera-soft-stream.env` in the repository (resolution, FPS, quality, autofocus, snapshot sizes).
-   - Pro stabilní mapování kamer použij `cam*_id` s hodnotou z `Picamera2.global_camera_info()` – služba pak vždy vybere správné zařízení i když se přehodí indexy `/dev/video*`.
+   - For stable camera mapping, use `cam*_id` with the value from `Picamera2.global_camera_info()` - the service will always select the correct device even if `/dev/video*` indices shift.
 2. Deploy to the Pi:
    ```bash
    ./Scripts/rpi_cameras/deploy-soft-stream.sh

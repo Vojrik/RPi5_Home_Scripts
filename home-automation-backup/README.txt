@@ -9,11 +9,11 @@ Retention: 30 most recent snapshots for each component (HA, Z2M, OctoPrint)
 Log file: /var/log/home_automation_backup.log
 
 What the script does
-- Zigbee2MQTT: triggers a coordinator backup through MQTT (topic zigbee2mqtt/bridge/request/backup), vytvoří konzistentní snapshot dat přes `rsync` do dočasného adresáře a z něj vyrobí .tar.gz archiv.
-- Home Assistant: nejprve zkusí přes API založit nativní HA Backup a nově vzniklý soubor zkopíruje do cílového adresáře; poté po ořezu starších nativních záloh vytvoří pomocí `rsync` neměnnou kopii celé konfigurace a z ní vytvoří .tar.gz.
-- OctoPrint: spustí oficiální příkaz `plugins backup:backup` a uloží výsledné .zip (nastavení, pluginy, profily atd.).
-  Záloha se spouští s explicitním `--basedir`, aby OctoPrint vždy pracoval s produkčním profilem i v případě, že cron běží pod uživatelem root.
-- Po dokončení každého balíčku smaže snapshot z dočasného adresáře a v cíli drží pouze nejnovějších 30 souborů v každé podsložce.
+- Zigbee2MQTT: triggers a coordinator backup through MQTT (topic zigbee2mqtt/bridge/request/backup), creates a consistent data snapshot via `rsync` into a temporary directory, and archives it as .tar.gz.
+- Home Assistant: first tries to create a native HA Backup via the API and copies the new file to the target directory; then, after trimming older native backups, it uses `rsync` to create an immutable copy of the full configuration and archives it as .tar.gz.
+- OctoPrint: runs the official `plugins backup:backup` command and stores the resulting .zip (settings, plugins, profiles, etc.).
+  The backup runs with an explicit `--basedir` so OctoPrint always uses the production profile even if cron runs as root.
+- After each component finishes, the script deletes the snapshot from the temporary directory and keeps only the newest 30 files per subfolder in the destination.
 
 Target directory layout
 - .../Apps_Backups/
@@ -43,11 +43,11 @@ Restore procedure (summary)
 Script configuration hints
 - Backup destination: variable BACKUP_DIR near the top of the script
 - OctoPrint binary: variable OCTOPRINT_BIN (auto-detection is attempted as well)
-- OctoPrint basedir: variable OCTOPRINT_BASEDIR (výchozí `/home/<user>/.octoprint`); změňte jen pokud máte konfiguraci jinde
+- OctoPrint basedir: variable OCTOPRINT_BASEDIR (default `/home/<user>/.octoprint`); change only if your configuration lives elsewhere
 - OctoPrint exclusions: variable OCTO_EXCLUDES (e.g. "timelapse uploads")
 - MQTT credentials for Z2M: read from /opt/home-automation/credentials/mqtt_password.txt (user 'ha')
 
 Notes
 - The script expects the mosquitto and zigbee2mqtt containers to be running to trigger the coordinator backup; the archival steps themselves will still run without them.
 - Cron runs log progress to /var/log/home_automation_backup.log.
-- Dočasné snapshoty se ukládají do `/tmp` (pomocí `mktemp`) a jsou odstraněny po doběhnutí skriptu, takže archivování neprobíhá nad živými soubory.
+- Temporary snapshots are stored in `/tmp` (via `mktemp`) and removed after the script finishes, so archiving never runs against live files.

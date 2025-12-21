@@ -127,7 +127,7 @@ if $ABORT_RUNNING; then
     if [[ "$d" == /dev/nvme* ]]; then
       set +e; status_line=$(sudo smartctl -a "$d" 2>/dev/null | grep -i 'Self-test' | head -n1); set -e || true
       if grep -qi 'in progress' <<<"$status_line"; then
-        log "$d: self-test in progress → abortuji (smartctl -X)"
+        log "$d: self-test in progress -> aborting (smartctl -X)"
         set +e; sudo smartctl -X "$d" >> "$LOG" 2>&1; set -e || true
       fi
     else
@@ -136,7 +136,7 @@ if $ABORT_RUNNING; then
         set +e; status_line=$(sudo smartctl -c -d sat "$d" 2>/dev/null | grep -i 'Self-test execution status'); set -e || true
       fi
       if grep -qi 'in progress' <<<"$status_line"; then
-        log "$d: self-test in progress → abortuji (smartctl -X)"
+        log "$d: self-test in progress -> aborting (smartctl -X)"
         set +e; sudo smartctl -X -d auto "$d" >> "$LOG" 2>&1; rcx=$?; set -e || true
         if (( rcx != 0 )); then
           set +e; sudo smartctl -X -d sat "$d" >> "$LOG" 2>&1; set -e || true

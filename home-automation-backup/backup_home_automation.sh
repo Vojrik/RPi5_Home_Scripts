@@ -175,7 +175,7 @@ $NICE -n 10 $IONICE -c 3 $TAR -C "$Z2M_STAGE" -czf "$Z2M_ARCHIVE" .
 HA_NATIVE_BACKUP_COPIED=""
 if ha_trigger_backup_via_api; then
   if NEWFILE=$(ha_wait_and_collect_backup_file); then
-    # Copy the generated file to the target directory s popisnějším názvem
+    # Copy the generated file to the target directory with a more descriptive name
     bn=$(basename "$NEWFILE")
     case "$bn" in
       *.tar.gz) suffix=".tar.gz" ;;

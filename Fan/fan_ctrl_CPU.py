@@ -9,7 +9,7 @@ import fan_pwm  # must provide: init_pwm(freq_hz), set_fan_speed(duty_pct), stop
 WAIT_TIME = 2.0
 PWM_FREQ = 20000            # Hz for 3-pin DC; 25000 for 4-pin
 MODE_FILE = "/run/fan_mode" # "normal" / "silent"
-HYST = 1.0                  # °C
+HYST = 1.0                  # degC
 
 # Duty policy
 FAN_MIN_DUTY = 23.0         # % that reliably keeps fan spinning (tune to your fan)
@@ -79,7 +79,7 @@ if not all(tempSteps[i] < tempSteps[i+1] for i in range(len(tempSteps)-1)):
     sys.exit(1)
 
 try:
-    # Lazy enable: až když je potřeba >0 %
+    # Lazy enable: only when needed (>0%)
     while True:
         mode = read_mode()
         speeds = profiles[mode]
