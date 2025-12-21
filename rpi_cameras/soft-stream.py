@@ -169,8 +169,9 @@ class StreamingOutput(io.BufferedIOBase):
 
 
 class CameraManager:
-    def __init__(self, index, width, height, framerate, quality, name, snapshot_width=None, snapshot_height=None, snapshot_quality=95, autofocus=False):
+    def __init__(self, index, width, height, framerate, quality, name, snapshot_width=None, snapshot_height=None, snapshot_quality=95, autofocus=False, camera_id=None):
         self.index = index
+        self.camera_id = camera_id
         self.width = width
         self.height = height
         self.framerate = framerate
@@ -322,7 +323,25 @@ QUALITY_MAP = {
 EXIT_NO_CAMERA = 66
 
 
-def probe_camera(index: int) -> bool:
+def resolve_camera_index(camera_id: Optional[str], fallback_index: int) -> Optional[int]:
+    try:
+        infos = Picamera2.global_camera_info()
+    except Exception as exc:
+        logging.error("Nedokážu načíst seznam kamer: %s", exc)
+        return None
+
+    if camera_id:
+        for idx, info in enumerate(infos or []):
+            if isinstance(info, dict) and info.get("Id") == camera_id:
+                logging.info("Kamera s ID %s nalezena na indexu %d.", camera_id, idx)
+                return idx
+        logging.warning("Kamera s ID %s nebyla nalezena.", camera_id)
+        return None
+
+    return fallback_index
+
+
+def probe_camera(index: int, camera_id: Optional[str] = None) -> bool:
     try:
         infos = Picamera2.global_camera_info()
     except Exception as exc:
@@ -458,6 +477,7 @@ def serve(manager: CameraManager, port: int):
 def main():
     parser = argparse.ArgumentParser(description="Software MJPEG streaming portal for Picamera2.")
     parser.add_argument("--camera-index", type=int, default=0, help="Index kamery (default 0)")
+    parser.add_argument("--camera-id", type=str, default=None, help="Persistentní ID kamery z Picamera2.global_camera_info()")
     parser.add_argument("--width", type=int, default=1280, help="Šířka obrazu")
     parser.add_argument("--height", type=int, default=720, help="Výška obrazu")
     parser.add_argument("--framerate", type=int, default=15, help="Snímková frekvence")
@@ -480,12 +500,16 @@ def main():
         parser.error("Snapshot kvalita musí být v rozsahu 1-100.")
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    if not probe_camera(args.camera_index):
-        logging.error("Kamera s indexem %d není dostupná. Spusť službu až po připojení kamery.", args.camera_index)
+    effective_index = resolve_camera_index(args.camera_id, args.camera_index)
+    if effective_index is None or not probe_camera(effective_index, args.camera_id):
+        if args.camera_id:
+            logging.error("Kamera s ID %s není dostupná. Spusť službu až po připojení požadované kamery.", args.camera_id)
+        else:
+            logging.error("Kamera s indexem %d není dostupná. Spusť službu až po připojení kamery.", args.camera_index)
         sys.exit(EXIT_NO_CAMERA)
 
     manager = CameraManager(
-        index=args.camera_index,
+        index=effective_index,
         width=args.width,
         height=args.height,
         framerate=args.framerate,
@@ -495,6 +519,7 @@ def main():
         snapshot_height=args.snapshot_height or None,
         snapshot_quality=args.snapshot_quality,
         autofocus=bool(args.autofocus),
+        camera_id=args.camera_id,
     )
     serve(manager, args.port)
 
