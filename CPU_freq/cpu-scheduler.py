@@ -35,7 +35,7 @@ STATE_DIR = pathlib.Path("/var/lib/cpu-scheduler"); STATE_DIR.mkdir(parents=True
 CFG_FILE   = STATE_DIR/"config.json"
 MODE_FILE  = STATE_DIR/"mode"
 OVR_FILE   = STATE_DIR/"override_until"
-LAST_WRITTEN = {"gov": None, "min": None, "max": None, "fan": None}
+LAST_WRITTEN = {"gov": None, "min": None, "max": None, "fan": None, "force_high_fallback": None}
 _AVAILABLE_GOVS = None
 
 def log(msg): print(time.strftime("%H:%M:%S"), msg, flush=True)
@@ -99,6 +99,22 @@ def ensure_governor(name: str):
     if changed or LAST_WRITTEN["gov"] != name:
         log(f"GOVERNOR={name}")
         LAST_WRITTEN["gov"] = name
+
+def pick_force_high_governor(cfg):
+    gov = cfg["perf_governor"]
+    if gov not in ("performance", "userspace"):
+        return gov
+    govs = available_governors()
+    for cand in ("schedutil", "ondemand", "conservative"):
+        if cand in govs:
+            if LAST_WRITTEN.get("force_high_fallback") != cand:
+                log(f"NOTICE: force-high requested with fixed governor '{gov}', using '{cand}' instead")
+                LAST_WRITTEN["force_high_fallback"] = cand
+            return cand
+    if LAST_WRITTEN.get("force_high_fallback") != "none":
+        log(f"WARNING: force-high requested with fixed governor '{gov}', but no scaling governor available; keeping current")
+        LAST_WRITTEN["force_high_fallback"] = "none"
+    return None
 
 def enforce_min_max(min_khz: int, max_khz: int, tag: str):
     tmin = clamp_freq(min_khz)
@@ -248,8 +264,11 @@ def daemon_loop():
             set_fan_mode("silent"); in_idle=True
             time.sleep(cfg["check_interval_s"]); last_is_night=is_night; continue
         if mode=="force-high":
-            ensure_governor(cfg["perf_governor"])
-            enforce_min_max(cfg["perf_min_khz"],cfg["perf_max_khz"],"PERF(force)")
+            gov = pick_force_high_governor(cfg)
+            if gov:
+                ensure_governor(gov)
+            # Use the widest safe range so max acts as a ceiling, not a fixed target.
+            enforce_min_max(cfg["idle_min_khz"],cfg["perf_max_khz"],"PERF(force-limit)")
             set_fan_mode("normal"); in_idle=False
             time.sleep(cfg["check_interval_s"]); last_is_night=is_night; continue
         # day-auto = automatic switching during the day, force performance profile at night
