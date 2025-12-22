@@ -226,18 +226,33 @@ def slider(lock):
             draw.text(**item)
         disp_show()
 
+def _white_test(lock):
+    with lock:
+        draw.rectangle((0, 0, image.width, image.height), outline=0, fill=255)
+        disp_show()
+
 def auto_slider(lock):
-    while misc.conf['slider']['auto']:
-        if _OLED_DISABLED:
-            try:
-                recover_oled(hard=False)
-            except Exception:
-                time.sleep(2)
-        else:
-            slider(lock)
+    while True:
+        misc.reload_conf()
+
+        if misc.conf['oled'].get('white-test', False):
+            _white_test(lock)
             misc.slider_sleep()
-    else:
+            continue
+
+        if misc.conf['slider']['auto']:
+            if _OLED_DISABLED:
+                try:
+                    recover_oled(hard=False)
+                except Exception:
+                    time.sleep(2)
+            else:
+                slider(lock)
+                misc.slider_sleep()
+            continue
+
         slider(lock)
+        return
 
 # --- main ---
 if __name__ == '__main__':

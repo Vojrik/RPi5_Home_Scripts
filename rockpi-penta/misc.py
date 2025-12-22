@@ -92,12 +92,14 @@ def read_conf():
         c['slider']['time'] = cfg.getfloat('slider', 'time')
         c['oled']['rotate'] = cfg.getboolean('oled', 'rotate')
         c['oled']['f-temp'] = cfg.getboolean('oled', 'f-temp')
+        c['oled']['white-test'] = cfg.getboolean('oled', 'white-test', fallback=False)
     except Exception:
         traceback.print_exc()
         c['slider']['auto'] = True
         c['slider']['time'] = 10.0
         c['oled']['rotate'] = False
         c['oled']['f-temp'] = False
+        c['oled']['white-test'] = False
     return c
 
 # ------ Disk info (optional, for alternate pages) ------
@@ -123,3 +125,7 @@ def slider_sleep():
 # ------ Global config ------
 conf = {'disk': [], 'idx': mp.Value('d', -1), 'run': mp.Value('d', 1)}
 conf.update(read_conf())
+
+def reload_conf():
+    conf.update(read_conf())
+    return conf
