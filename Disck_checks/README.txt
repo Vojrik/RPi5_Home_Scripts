@@ -9,11 +9,11 @@ Quick Overview (what runs, when, and where it logs)
 - Weekly (Tuesday) 17:50: short SMART self-tests
   - Cron: `50 17 * * 2`
   - Log: `/var/log/Disck_checks/smart_daily.log`
-- Monthly (first Tuesday) 08:00: RAID parity check (`check` action)
-  - Cron: `0 8 * * 2 [ $(date +%d) -le 7 ] && …`
+- Monthly (first Tuesday) 09:00: RAID parity check (`check` action)
+  - Cron: `0 9 * * 2 [ $(date +%d) -le 7 ] && …`
   - Log: `/var/log/Disck_checks/raid_check.log`
-- Monthly (first Tuesday) 18:30: long SMART self-tests
-  - Cron: `30 18 * * 2 [ $(date +%d) -le 7 ] && …`
+- Monthly (first Wednesday) 09:00: long SMART self-tests
+  - Cron: `0 9 * * 3 [ $(date +%d) -le 7 ] && …`
   - Log: `/var/log/Disck_checks/smart_daily.log`
 
 Desktop shortcuts point to the active log files with matching names.
@@ -27,13 +27,13 @@ Current Cron Schedule
 - Weekly short SMART self-tests (Tuesday 17:50)
   - Cron (root):
     `50 17 * * 2 nice -n 10 ionice -c3 /home/vojrik/Scripts/Disck_checks/smart_daily.sh --short >/tmp/smart_short.cron.log 2>&1`
-  - Skipped automatically if it is the first Tuesday of the month (long tests run later that day).
-- Monthly long SMART self-tests (first Tuesday 18:30)
+  - Skipped automatically if it is the first Wednesday of the month (long tests run later that day).
+- Monthly long SMART self-tests (first Wednesday 09:00)
   - Cron (root):
-    `30 18 * * 2 [ $(date +\%d) -le 7 ] && nice -n 10 ionice -c3 /home/vojrik/Scripts/Disck_checks/smart_daily.sh --long >/tmp/smart_long.cron.log 2>&1`
-- RAID parity check (first Tuesday 08:00, scheduled during daytime)
+    `0 9 * * 3 [ $(date +\%d) -le 7 ] && nice -n 10 ionice -c3 /home/vojrik/Scripts/Disck_checks/smart_daily.sh --long >/tmp/smart_long.cron.log 2>&1`
+- RAID parity check (first Tuesday 09:00, scheduled during daytime)
   - Cron (root):
-    `0 8 * * 2 [ $(date +\%d) -le 7 ] && nice -n 10 ionice -c3 /home/vojrik/Scripts/Disck_checks/raid_check.sh >/tmp/raid_check.cron.log 2>&1`
+    `0 9 * * 2 [ $(date +\%d) -le 7 ] && nice -n 10 ionice -c3 /home/vojrik/Scripts/Disck_checks/raid_check.sh >/tmp/raid_check.cron.log 2>&1`
 
 Cron treats the day-of-month and day-of-week fields as logical OR, hence the `[ $(date +%d) -le 7 ]` guard.
 

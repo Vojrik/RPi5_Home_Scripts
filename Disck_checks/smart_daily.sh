@@ -103,12 +103,12 @@ else
   STATE_DIR="$STATE_DIR_FALLBACK"
 fi
 
-# Skip short tests on the day long tests are scheduled (first Tuesday of the month)
+# Skip short tests on the day long tests are scheduled (first Wednesday of the month)
 if $RUN_SHORT_TEST; then
-  dow=$(date +%u)   # 1=Po .. 7=Ne
+  dow=$(date +%u)   # 1=Mon .. 7=Sun
   dom=$(date +%d)   # 01-31
-  if [[ "$dow" == "2" ]] && (( 10#$dom <= 7 )); then
-    log "Short self-test skip: first Tuesday of the month (a long test runs at 18:30)."
+  if [[ "$dow" == "3" ]] && (( 10#$dom <= 7 )); then
+    log "Short self-test skip: first Wednesday of the month (a long test runs at 09:00)."
     RUN_SHORT_TEST=false
   fi
 fi
