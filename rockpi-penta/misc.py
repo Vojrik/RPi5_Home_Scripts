@@ -93,6 +93,7 @@ def read_conf():
         c['oled']['rotate'] = cfg.getboolean('oled', 'rotate')
         c['oled']['f-temp'] = cfg.getboolean('oled', 'f-temp')
         c['oled']['white-test'] = cfg.getboolean('oled', 'white-test', fallback=False)
+        c['oled']['invert'] = cfg.getboolean('oled', 'invert', fallback=False)
     except Exception:
         traceback.print_exc()
         c['slider']['auto'] = True
@@ -100,6 +101,7 @@ def read_conf():
         c['oled']['rotate'] = False
         c['oled']['f-temp'] = False
         c['oled']['white-test'] = False
+        c['oled']['invert'] = False
     return c
 
 # ------ Disk info (optional, for alternate pages) ------

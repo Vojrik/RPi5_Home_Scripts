@@ -16,8 +16,13 @@ def _read_white_test():
     cfg.read(CONF_PATH)
     return cfg.getboolean("oled", "white-test", fallback=False)
 
+def _read_invert():
+    cfg = ConfigParser()
+    cfg.read(CONF_PATH)
+    return cfg.getboolean("oled", "invert", fallback=False)
 
-def _set_white_test(enabled: bool):
+
+def _set_oled_bool(key: str, enabled: bool):
     text = CONF_PATH.read_text(encoding="ascii", errors="ignore")
     lines = text.splitlines()
     section_re = re.compile(r"^\s*\[(?P<name>[^\]]+)\]\s*$")
@@ -33,7 +38,7 @@ def _set_white_test(enabled: bool):
     if oled_idx is None:
         if lines and lines[-1].strip():
             lines.append("")
-        lines.extend(["[oled]", f"white-test = {value}"])
+        lines.extend(["[oled]", f"{key} = {value}"])
     else:
         end_idx = len(lines)
         for i in range(oled_idx + 1, len(lines)):
@@ -41,18 +46,24 @@ def _set_white_test(enabled: bool):
                 end_idx = i
                 break
 
-        key_re = re.compile(r"^\s*white-test\s*=")
+        key_re = re.compile(rf"^\s*{re.escape(key)}\s*=")
         for i in range(oled_idx + 1, end_idx):
             if key_re.match(lines[i]):
-                lines[i] = f"white-test = {value}"
+                lines[i] = f"{key} = {value}"
                 break
         else:
-            lines.insert(oled_idx + 1, f"white-test = {value}")
+            lines.insert(oled_idx + 1, f"{key} = {value}")
 
     content = "\n".join(lines)
     if text.endswith("\n"):
         content += "\n"
     CONF_PATH.write_text(content, encoding="ascii")
+
+def _set_white_test(enabled: bool):
+    _set_oled_bool("white-test", enabled)
+
+def _set_invert(enabled: bool):
+    _set_oled_bool("invert", enabled)
 
 
 def _maybe_restart(restart: bool):
@@ -68,7 +79,8 @@ def _require_root():
 
 def _cmd_status(_args):
     enabled = _read_white_test()
-    print(f"white-test={str(enabled).lower()}")
+    invert = _read_invert()
+    print(f"white-test={str(enabled).lower()} invert={str(invert).lower()}")
 
 
 def _cmd_full_white(args):
@@ -77,6 +89,13 @@ def _cmd_full_white(args):
     _set_white_test(enabled)
     _maybe_restart(args.restart)
     print(f"white-test set to {str(enabled).lower()}")
+
+def _cmd_invert(args):
+    _require_root()
+    enabled = args.state == "on"
+    _set_invert(enabled)
+    _maybe_restart(args.restart)
+    print(f"invert set to {str(enabled).lower()}")
 
 
 def main():
@@ -90,6 +109,11 @@ def main():
     p_full.add_argument("state", choices=["on", "off"])
     p_full.add_argument("--restart", action="store_true", help="Restart rockpi-penta.service")
     p_full.set_defaults(func=_cmd_full_white)
+
+    p_invert = sub.add_parser("invert", help="Toggle inverted OLED colors")
+    p_invert.add_argument("state", choices=["on", "off"])
+    p_invert.add_argument("--restart", action="store_true", help="Restart rockpi-penta.service")
+    p_invert.set_defaults(func=_cmd_invert)
 
     args = parser.parse_args()
     args.func(args)

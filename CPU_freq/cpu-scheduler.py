@@ -9,7 +9,7 @@ import time, datetime, pathlib, os, sys, argparse, json
 
 # -------- default configuration --------
 NIGHT_START = "22:00"
-NIGHT_END   = "08:00"
+NIGHT_END   = "08:30"
 
 IDLE_MIN_KHZ = 600_000
 IDLE_MAX_KHZ = 1_200_000

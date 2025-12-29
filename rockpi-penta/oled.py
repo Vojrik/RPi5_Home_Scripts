@@ -164,16 +164,27 @@ def disp_show():
         im = image.rotate(180) if misc.conf['oled'].get('rotate', False) else image
         disp.image(im)
         disp.show()
-        draw.rectangle((0, 0, image.width, image.height), outline=0, fill=0)
+        draw.rectangle((0, 0, image.width, image.height), outline=0, fill=_bg_color())
     safe_disp_call(_do)
 
+def _text_color():
+    return 0 if misc.conf['oled'].get('invert', False) else 255
+
+def _bg_color():
+    return 255 if misc.conf['oled'].get('invert', False) else 0
+
+def _clear_background():
+    draw.rectangle((0, 0, image.width, image.height), outline=0, fill=_bg_color())
+
 def welcome():
-    draw.text((0, 0), 'ROCKPi SATA HAT', font=font['14'], fill=255)
-    draw.text((32, 16), 'Loading...', font=font['12'], fill=255)
+    _clear_background()
+    draw.text((0, 0), 'ROCKPi SATA HAT', font=font['14'], fill=_text_color())
+    draw.text((32, 16), 'Loading...', font=font['12'], fill=_text_color())
     disp_show()
 
 def goodbye():
-    draw.text((32, 8), 'Good Bye ~', font=font['14'], fill=255)
+    _clear_background()
+    draw.text((32, 8), 'Good Bye ~', font=font['14'], fill=_text_color())
     disp_show()
     time.sleep(2)
     disp_show()  # clear
@@ -181,47 +192,50 @@ def goodbye():
 def put_disk_info():
     k, v = misc.get_disk_info()
     text1 = 'Disk: {} {}'.format(k[0], v[0])
+    text_color = _text_color()
 
     if len(k) == 5:
         text2 = '{} {}  {} {}'.format(k[1], v[1], k[2], v[2])
         text3 = '{} {}  {} {}'.format(k[3], v[3], k[4], v[4])
         page = [
-            {'xy': (0, -2), 'text': text1, 'fill': 255, 'font': font['11']},
-            {'xy': (0, 10), 'text': text2, 'fill': 255, 'font': font['11']},
-            {'xy': (0, 21), 'text': text3, 'fill': 255, 'font': font['11']},
+            {'xy': (0, -2), 'text': text1, 'fill': text_color, 'font': font['11']},
+            {'xy': (0, 10), 'text': text2, 'fill': text_color, 'font': font['11']},
+            {'xy': (0, 21), 'text': text3, 'fill': text_color, 'font': font['11']},
         ]
     elif len(k) == 3:
         text2 = '{} {}  {} {}'.format(k[1], v[1], k[2], v[2])
         page = [
-            {'xy': (0, 2), 'text': text1, 'fill': 255, 'font': font['12']},
-            {'xy': (0, 18), 'text': text2, 'fill': 255, 'font': font['12']},
+            {'xy': (0, 2), 'text': text1, 'fill': text_color, 'font': font['12']},
+            {'xy': (0, 18), 'text': text2, 'fill': text_color, 'font': font['12']},
         ]
     else:
-        page = [{'xy': (0, 2), 'text': text1, 'fill': 255, 'font': font['14']}]
+        page = [{'xy': (0, 2), 'text': text1, 'fill': text_color, 'font': font['14']}]
 
     return page
 
 def gen_pages():
+    text_color = _text_color()
     pages = {
         0: [
-            {'xy': (0, -2), 'text': misc.get_info('up'), 'fill': 255, 'font': font['11']},
-            {'xy': (0, 10), 'text': misc.get_cpu_temp(), 'fill': 255, 'font': font['11']},
-            {'xy': (0, 21), 'text': misc.get_info('ip'), 'fill': 255, 'font': font['11']},
+            {'xy': (0, -2), 'text': misc.get_info('up'), 'fill': text_color, 'font': font['11']},
+            {'xy': (0, 10), 'text': misc.get_cpu_temp(), 'fill': text_color, 'font': font['11']},
+            {'xy': (0, 21), 'text': misc.get_info('ip'), 'fill': text_color, 'font': font['11']},
         ],
         1: [
-            {'xy': (0, 2), 'text': misc.get_info('cpu'), 'fill': 255, 'font': font['12']},
-            {'xy': (0, 18), 'text': misc.get_info('men'), 'fill': 255, 'font': font['12']},
+            {'xy': (0, 2), 'text': misc.get_info('cpu'), 'fill': text_color, 'font': font['12']},
+            {'xy': (0, 18), 'text': misc.get_info('men'), 'fill': text_color, 'font': font['12']},
         ],
         2: [
-            {'xy': (0, -2), 'text': misc.get_info('disk_root'), 'fill': 255, 'font': font['10']},
-            {'xy': (0, 10), 'text': misc.get_info('disk_md0'),  'fill': 255, 'font': font['10']},
-            {'xy': (0, 21), 'text': misc.get_info('disk_md1'),  'fill': 255, 'font': font['10']},
+            {'xy': (0, -2), 'text': misc.get_info('disk_root'), 'fill': text_color, 'font': font['10']},
+            {'xy': (0, 10), 'text': misc.get_info('disk_md0'),  'fill': text_color, 'font': font['10']},
+            {'xy': (0, 21), 'text': misc.get_info('disk_md1'),  'fill': text_color, 'font': font['10']},
         ],
     }
     return pages
 
 def slider(lock):
     with lock:
+        _clear_background()
         for item in misc.slider_next(gen_pages()):
             draw.text(**item)
         disp_show()

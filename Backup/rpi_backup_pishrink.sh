@@ -65,11 +65,15 @@ fi
 
 # --- Determine the most recent version ---
 shopt -s nullglob
-existing=( "$DEST_DIR"/"${NAME_PREFIX}"_v*.img )
+existing=(
+  "$DEST_DIR"/"${NAME_PREFIX}"_v*.img
+  "$DEST_DIR"/"${NAME_PREFIX}"_v*.7z
+  "$DEST_DIR"/"${NAME_PREFIX}"_v*.rar
+)
 max_major=0; max_minor=0
 for f in "${existing[@]}"; do
   bn="$(basename "$f")"
-  if [[ "$bn" =~ ${NAME_PREFIX}_v([0-9]+)\.([0-9]+)\.img$ ]]; then
+  if [[ "$bn" =~ ${NAME_PREFIX}_v([0-9]+)\.([0-9]+)\.(img|7z|rar)$ ]]; then
     M="${BASH_REMATCH[1]}"; m="${BASH_REMATCH[2]}"
     if (( M > max_major || (M == max_major && m > max_minor) )); then
       max_major=$M; max_minor=$m
