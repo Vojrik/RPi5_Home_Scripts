@@ -5,7 +5,7 @@ After=mediacenter.service
 [Service]
 Type=simple
 User=root
-ExecStart= /usr/bin/python /home/osmc/Scripts/fan_ctrl_CPU.py
+ExecStart= /usr/bin/python /home/vojrik/Scripts/Fan/fan_ctrl_CPU.py
 Restart=always
 
 [Install]
