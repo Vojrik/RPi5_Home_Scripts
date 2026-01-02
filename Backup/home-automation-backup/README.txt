@@ -2,7 +2,7 @@ Home Assistant + Zigbee2MQTT + OctoPrint Backup
 ----------------------------------------------
 
 Script: backup_home_automation.sh
-Location: /home/vojrik/Scripts/home-automation-backup/
+Location: /home/vojrik/Scripts/Backup/home-automation-backup/
 Schedule: daily at 19:01 (cron entry in /etc/cron.d/home_automation_backup)
 Backup target: /home/vojrik/Desktop/md0/_RPi5_Home_OS/Apps_Backups
 Retention: 30 most recent snapshots for each component (HA, Z2M, OctoPrint)
@@ -22,7 +22,7 @@ Target directory layout
   - octoprint/
 
 Manual execution
-    sudo /home/vojrik/Scripts/home-automation-backup/backup_home_automation.sh
+    sudo /home/vojrik/Scripts/Backup/home-automation-backup/backup_home_automation.sh
 
 Restore procedure (summary)
 1) Home Assistant + Zigbee2MQTT:

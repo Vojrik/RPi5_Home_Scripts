@@ -3,8 +3,12 @@ set -euo pipefail
 
 # ---- Environment detection ----
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-SCRIPTS_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+SCRIPTS_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)
 ENV_FILE="$SCRIPTS_ROOT/.rpi5_home_env"
+if [ ! -f "$ENV_FILE" ]; then
+  SCRIPTS_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+  ENV_FILE="$SCRIPTS_ROOT/.rpi5_home_env"
+fi
 if [ -f "$ENV_FILE" ]; then
   # shellcheck disable=SC1090
   . "$ENV_FILE"
