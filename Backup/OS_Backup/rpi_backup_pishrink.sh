@@ -206,7 +206,18 @@ if [[ "$dozip" =~ ^[Yy]$ ]]; then
     SEV_PATH="${IMG_PATH%.img}.7z"
     echo "Creating 7z archive: $SEV_PATH" | tee -a "$LOG_PATH"
     if ! $DRY_RUN; then
-      7z a -mx=9 "$SEV_PATH" "$IMG_PATH" | tee -a "$LOG_PATH"
+      7z a -mx=3 -bb1 -bsp1 "$SEV_PATH" "$IMG_PATH" | tee -a "$LOG_PATH"
+      if [[ -e "$SEV_PATH" ]]; then
+        if command -v numfmt >/dev/null 2>&1; then
+          img_h=$(numfmt --to=iec-i --suffix=B --format="%.1f" "$(stat -c %s "$IMG_PATH")" 2>/dev/null || echo "n/a")
+          sev_h=$(numfmt --to=iec-i --suffix=B --format="%.1f" "$(stat -c %s "$SEV_PATH")" 2>/dev/null || echo "n/a")
+          echo "Sizes: img=${img_h}, 7z=${sev_h}" | tee -a "$LOG_PATH"
+        else
+          img_bytes=$(stat -c %s "$IMG_PATH" 2>/dev/null || echo "n/a")
+          sev_bytes=$(stat -c %s "$SEV_PATH" 2>/dev/null || echo "n/a")
+          echo "Sizes (bytes): img=${img_bytes}, 7z=${sev_bytes}" | tee -a "$LOG_PATH"
+        fi
+      fi
     fi
   else
     echo "7z is not installed. Skipping." | tee -a "$LOG_PATH"
