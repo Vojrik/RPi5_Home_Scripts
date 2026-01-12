@@ -289,6 +289,7 @@ def main():
         print("Press Ctrl+C to stop.")
 
         last_error_at = 0.0
+        last_availability_at = 0.0
         try:
             while True:
                 try:
@@ -320,6 +321,14 @@ def main():
                     mqtt_client.publish(f"{mqtt_cfg['base_topic']}/voltage", f"{total_voltage_v:.6f}")
                     mqtt_client.publish(f"{mqtt_cfg['base_topic']}/current", f"{current_a:.6f}")
                     mqtt_client.publish(f"{mqtt_cfg['base_topic']}/power", f"{power_w:.6f}")
+                    now = time.time()
+                    if now - last_availability_at > 30:
+                        mqtt_client.publish(
+                            f"{mqtt_cfg['base_topic']}/status",
+                            "online",
+                            retain=True,
+                        )
+                        last_availability_at = now
 
                 time.sleep(args.interval)
         except KeyboardInterrupt:

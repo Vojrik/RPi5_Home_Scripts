@@ -162,6 +162,8 @@ def read_pmic_adc():
             continue
         key, raw_value = line.split("=", 1)
         key = key.strip()
+        if " " in key:
+            key = key.split()[0]
         raw_value = raw_value.strip()
         try:
             readings[key] = parse_adc_value(raw_value)
