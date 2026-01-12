@@ -34,6 +34,8 @@ Hardware konfigurace je nastavena přímo ve skriptu:
 - `MAX_CURRENT_A = 4.0`
 - `RSHUNT_OHM = 0.015493`
 
+Skript používá zámek `/home/vojrik/.i2c-1.lock`, aby se zabránilo kolizím s jinými procesy na I2C.
+
 ## Ruční spuštění
 
 ```bash

@@ -1,6 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 
+import contextlib
+import fcntl
 import os
 import time
 import errno
@@ -22,7 +24,7 @@ _OLED_DISABLED = False
 _FAILS = 0
 _HARD_RESET_AFTER = 2  # escalate to a hard restart after repeated failures
 
-# --- Fonty ---
+# --- Fonts ---
 font = {
     '10': ImageFont.truetype('fonts/DejaVuSansMono-Bold.ttf', 10),
     '11': ImageFont.truetype('fonts/DejaVuSansMono-Bold.ttf', 11),
@@ -30,7 +32,33 @@ font = {
     '14': ImageFont.truetype('fonts/DejaVuSansMono-Bold.ttf', 14),
 }
 
+I2C_LOCK_PATH = "/home/vojrik/.i2c-1.lock"
+
 # --- Fault-tolerant I2C / OLED helpers ---
+
+@contextlib.contextmanager
+def i2c_lock(timeout=1.0):
+    start = time.time()
+    fd = os.open(I2C_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o666)
+    try:
+        os.chmod(I2C_LOCK_PATH, 0o666)
+    except OSError:
+        pass
+    try:
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.time() - start > timeout:
+                    raise TimeoutError("I2C lock timeout")
+                time.sleep(0.01)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 def _mk_i2c():
     # Calm the bus by lowering the frequency
@@ -69,23 +97,24 @@ def disp_init():
     i2c = None
     time.sleep(0.05)
 
-    i2c = _mk_i2c()
+    with i2c_lock():
+        i2c = _mk_i2c()
 
-    # Wait for the bus lock
-    t0 = time.time()
-    while not i2c.try_lock():
-        if time.time() - t0 > 1.5:
-            raise OSError("I2C busy")
-        time.sleep(0.01)
-    try:
-        # Optionally: i2c.scan()
-        pass
-    finally:
-        i2c.unlock()
+        # Wait for the bus lock
+        t0 = time.time()
+        while not i2c.try_lock():
+            if time.time() - t0 > 1.5:
+                raise OSError("I2C busy")
+            time.sleep(0.01)
+        try:
+            # Optionally: i2c.scan()
+            pass
+        finally:
+            i2c.unlock()
 
-    disp = adafruit_ssd1306.SSD1306_I2C(128, 32, i2c, addr=0x3C, reset=None)
-    disp.fill(0)
-    disp.show()
+        disp = adafruit_ssd1306.SSD1306_I2C(128, 32, i2c, addr=0x3C, reset=None)
+        disp.fill(0)
+        disp.show()
     _OLED_DISABLED = False
     return disp
 
@@ -102,7 +131,8 @@ def safe_disp_call(fn, *args, **kwargs):
         try:
             if _OLED_DISABLED and attempt == 1:
                 recover_oled(hard=False)
-            out = fn(*args, **kwargs)
+            with i2c_lock():
+                out = fn(*args, **kwargs)
             _FAILS = 0
             _OLED_DISABLED = False
             return out

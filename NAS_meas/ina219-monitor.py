@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import argparse
+import contextlib
+import fcntl
 import json
 import os
 import socket
@@ -42,6 +44,7 @@ POWER_LSB_W = 20.0 * CURRENT_LSB_A
 CALIBRATION_VALUE = int(0.04096 / (CURRENT_LSB_A * RSHUNT_OHM))
 
 ENV_FILE = os.path.join(os.path.dirname(__file__), ".env")
+I2C_LOCK_PATH = "/home/vojrik/.i2c-1.lock"
 
 
 def load_env_file(path):
@@ -89,6 +92,31 @@ def to_signed_16(value):
     if value & 0x8000:
         return value - 0x10000
     return value
+
+
+@contextlib.contextmanager
+def i2c_lock(timeout=1.0):
+    start = time.time()
+    fd = os.open(I2C_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o666)
+    try:
+        os.chmod(I2C_LOCK_PATH, 0o666)
+    except OSError:
+        pass
+    try:
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.time() - start > timeout:
+                    raise TimeoutError("I2C lock timeout")
+                time.sleep(0.01)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 
 def build_mqtt_config(env):
@@ -159,7 +187,15 @@ def setup_mqtt(cfg):
     if mqtt is None:
         raise RuntimeError("Missing paho-mqtt. Install python3-paho-mqtt or paho-mqtt.")
 
-    client = mqtt.Client(client_id=cfg["client_id"], clean_session=True)
+    # Use the new callback API when available to avoid deprecation warnings.
+    try:
+        client = mqtt.Client(
+            client_id=cfg["client_id"],
+            clean_session=True,
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+        )
+    except (AttributeError, TypeError):
+        client = mqtt.Client(client_id=cfg["client_id"], clean_session=True)
     if cfg["user"] or cfg["password"]:
         client.username_pw_set(cfg["user"], cfg["password"])
 
@@ -195,6 +231,23 @@ def parse_args(env):
     return parser.parse_args()
 
 
+def read_measurements(bus, addr, retries=3):
+    delay = 0.05
+    for _ in range(retries):
+        try:
+            with i2c_lock():
+                shunt_raw = to_signed_16(read_register(bus, addr, REG_SHUNT_VOLTAGE))
+                bus_raw = read_register(bus, addr, REG_BUS_VOLTAGE)
+                current_raw = to_signed_16(read_register(bus, addr, REG_CURRENT))
+                power_raw = read_register(bus, addr, REG_POWER)
+            return shunt_raw, bus_raw, current_raw, power_raw
+        except (OSError, TimeoutError):
+            time.sleep(delay)
+            delay *= 2
+            continue
+    raise OSError("I2C read failed after retries")
+
+
 def main():
     if SMBus is None:
         print("Missing smbus/smbus2. Install python3-smbus or smbus2.")
@@ -219,27 +272,34 @@ def main():
         return 1
 
     with bus:
-        if args.i2c_address is None:
-            addr = find_ina219_address(bus)
-        else:
-            addr = int(args.i2c_address)
-        if addr is None:
-            print("INA219 not found on I2C addresses 0x40-0x4F.")
-            return 1
+        with i2c_lock():
+            if args.i2c_address is None:
+                addr = find_ina219_address(bus)
+            else:
+                addr = int(args.i2c_address)
+            if addr is None:
+                print("INA219 not found on I2C addresses 0x40-0x4F.")
+                return 1
 
-        write_register(bus, addr, REG_CONFIG, CONFIG_32V_80MV_CONT)
-        write_register(bus, addr, REG_CALIBRATION, CALIBRATION_VALUE)
+            write_register(bus, addr, REG_CONFIG, CONFIG_32V_80MV_CONT)
+            write_register(bus, addr, REG_CALIBRATION, CALIBRATION_VALUE)
 
         print(f"INA219 detected at 0x{addr:02X}")
         print(f"Rshunt={RSHUNT_OHM:.6f} Ohm, current_lsb={CURRENT_LSB_A:.9f} A")
         print("Press Ctrl+C to stop.")
 
+        last_error_at = 0.0
         try:
             while True:
-                shunt_raw = to_signed_16(read_register(bus, addr, REG_SHUNT_VOLTAGE))
-                bus_raw = read_register(bus, addr, REG_BUS_VOLTAGE)
-                current_raw = to_signed_16(read_register(bus, addr, REG_CURRENT))
-                power_raw = read_register(bus, addr, REG_POWER)
+                try:
+                    shunt_raw, bus_raw, current_raw, power_raw = read_measurements(bus, addr)
+                except OSError as exc:
+                    now = time.time()
+                    if now - last_error_at > 5:
+                        print(f"I2C read failed: {exc}")
+                        last_error_at = now
+                    time.sleep(args.interval)
+                    continue
 
                 shunt_voltage_v = shunt_raw * 10e-6
                 bus_voltage_v = ((bus_raw >> 3) * 4e-3)
