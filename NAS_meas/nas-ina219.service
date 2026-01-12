@@ -1,0 +1,17 @@
+[Unit]
+Description=NAS INA219 monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vojrik
+Group=vojrik
+WorkingDirectory=/home/vojrik/Scripts/NAS_meas
+EnvironmentFile=/home/vojrik/Scripts/NAS_meas/.env
+ExecStart=/usr/bin/env python3 /home/vojrik/Scripts/NAS_meas/ina219-monitor.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
