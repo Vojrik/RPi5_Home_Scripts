@@ -39,16 +39,19 @@ def build_mqtt_config(env):
     host = get_env(env, "MQTT_HOST", "127.0.0.1")
     if not host:
         return None
+    base_topic = get_env(env, "PMIC_MQTT_BASE_TOPIC", get_env(env, "MQTT_BASE_TOPIC", "rpi_supply"))
+    device_id = get_env(env, "PMIC_MQTT_DEVICE_ID", "rpi_supply")
+    device_name = get_env(env, "PMIC_MQTT_DEVICE_NAME", "RPi Supply")
     return {
         "host": host,
         "port": int(get_env(env, "MQTT_PORT", "1883")),
         "user": get_env(env, "MQTT_USER", ""),
         "password": get_env(env, "MQTT_PASSWORD", ""),
-        "client_id": get_env(env, "MQTT_CLIENT_ID", f"nas-pmic-{socket.gethostname()}"),
-        "base_topic": get_env(env, "MQTT_BASE_TOPIC", "nas/ina219"),
+        "client_id": get_env(env, "PMIC_MQTT_CLIENT_ID", f"rpi-supply-{socket.gethostname()}"),
+        "base_topic": base_topic,
         "discovery_prefix": get_env(env, "MQTT_DISCOVERY_PREFIX", "homeassistant"),
-        "device_id": get_env(env, "MQTT_DEVICE_ID", "nas_ina219"),
-        "device_name": get_env(env, "MQTT_DEVICE_NAME", "NAS INA219"),
+        "device_id": device_id,
+        "device_name": device_name,
     }
 
 

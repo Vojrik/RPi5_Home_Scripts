@@ -23,6 +23,8 @@ Použité parametry:
 - `MQTT_BASE_TOPIC` (default `nas/ina219`)
 - `MQTT_DISCOVERY_PREFIX` (default `homeassistant`)
 - `MQTT_DEVICE_ID`, `MQTT_DEVICE_NAME`
+- `PMIC_MQTT_BASE_TOPIC` (default `rpi_supply`)
+- `PMIC_MQTT_DEVICE_ID`, `PMIC_MQTT_DEVICE_NAME`
 - `I2C_BUS` (default `1`)
 - `I2C_ADDRESS` (volitelné; když není, skript skenuje 0x40-0x4F)
 - `PUBLISH_INTERVAL_SEC` (default `1.0`)
@@ -51,6 +53,7 @@ Pro PMIC hodnoty Raspberry Pi 5:
 ```
 
 Skript čte `vcgencmd pmic_read_adc` a publikuje `EXT5V_V`, `3V3_SYS_V`, `3V3_SYS_A`.
+PMIC senzory jsou publikované pod `PMIC_MQTT_BASE_TOPIC` a mají vlastní device ID/name.
 
 ## MQTT autodiscovery
 
