@@ -44,6 +44,14 @@ Skript používá zámek `/home/vojrik/.i2c-1.lock`, aby se zabránilo kolizím 
 
 Skript bude cyklicky vypisovat napětí, proud a výkon do terminálu.
 
+Pro PMIC hodnoty Raspberry Pi 5:
+
+```bash
+/home/vojrik/Scripts/NAS_meas/pi-pmic-monitor.py
+```
+
+Skript čte `vcgencmd pmic_read_adc` a publikuje `EXT5V_V`, `3V3_SYS_V`, `3V3_SYS_A`.
+
 ## MQTT autodiscovery
 
 Skript publikuje tři senzory:
@@ -68,4 +76,18 @@ Stav:
 
 ```bash
 systemctl status nas-ina219.service
+```
+
+Pro PMIC je připravená služba `nas-pmic.service`:
+
+```bash
+sudo cp /home/vojrik/Scripts/NAS_meas/nas-pmic.service /etc/systemd/system/nas-pmic.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now nas-pmic.service
+```
+
+Stav:
+
+```bash
+systemctl status nas-pmic.service
 ```
