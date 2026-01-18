@@ -2,8 +2,9 @@
 
 Tento adresar obsahuje jediny podporovany skript pro rizeni serv na Raspberry Pi 5.
 Pouziva se PIO-asistovane PWM (overlay `pwm-pio`), ktere je nezavisle na
-standardnim HW PWM bloku. Diky tomu muze bezet ventilator na 20 kHz pres PWM0
-(GPIO19) a serva mohou mit stabilni 50 Hz na libovolnych GPIO 0-27.
+standardnim HW PWM bloku RP1 (PWM0/PWM1). Diky tomu muze bezet ventilator na
+20 kHz pres PWM0 (GPIO19) a serva mohou mit stabilni 50 Hz na libovolnych GPIO
+0-27.
 
 ## Jak to funguje
 - Overlay `dtoverlay=pwm-pio,gpio=XX` zapne PIO PWM na zvolenem GPIO.
