@@ -24,6 +24,7 @@ This directory contains the lightweight MJPEG portal used for the two CSI camera
   1. switches the camera to continuous AF on stream start and runs a blocking `autofocus_cycle()`;
   2. runs the same cycle before offline snapshots (using `AfMode=Auto` for single acquisition);
   3. logs any timeouts or failures to `journalctl -u camera-soft-camX.service`.
+- **Stream watchdog** – while a client is connected, the server restarts the stream if no frames arrive for 10 seconds. Adjust via `--watchdog-timeout` (0 disables the watchdog).
 - **Resolution logging** – after configuring the stream the script logs the actual negotiated `main` size so mismatches with the requested resolution are obvious.
 
 ## Operating the Services

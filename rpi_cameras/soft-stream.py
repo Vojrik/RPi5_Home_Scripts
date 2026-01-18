@@ -5,6 +5,7 @@ import logging
 import sys
 import tempfile
 import threading
+import time
 from http import HTTPStatus, server
 from typing import Optional
 
@@ -98,7 +99,7 @@ PAGE_TEMPLATE = """\
       <section class="details">
         <div><span class="badge">Resolution</span>{width}x{height}</div>
         <div><span class="badge">Frame rate</span>{fps} fps</div>
-        <div><span class="badge">Kvalita</span>{quality}</div>
+        <div><span class="badge">Quality</span>{quality}</div>
         <div><span class="badge">Port</span>{port}</div>
       </section>
       <section class="cards">
@@ -118,7 +119,7 @@ PAGE_TEMPLATE = """\
           <p><a href="webrtc">more info</a></p>
         </article>
         <article class="card">
-          <h2>Konfigurace</h2>
+          <h2>Configuration</h2>
           <p>Edit <code>/etc/camera-streamer/camera-soft-stream.env</code> and restart the service:</p>
           <p><code>sudo systemctl restart camera-soft-cam0.service</code></p>
         </article>
@@ -137,6 +138,7 @@ class StreamingOutput(io.BufferedIOBase):
         self.frame: Optional[bytes] = None
         self.buffer = io.BytesIO()
         self.condition = threading.Condition()
+        self._last_frame_at: Optional[float] = None
 
     def write(self, buf):
         if buf.startswith(b"\xff\xd8"):
@@ -146,6 +148,7 @@ class StreamingOutput(io.BufferedIOBase):
         if buf.endswith(b"\xff\xd9"):
             with self.condition:
                 self.frame = self.buffer.getvalue()
+                self._last_frame_at = time.monotonic()
                 self.condition.notify_all()
             self.buffer.seek(0)
             self.buffer.truncate()
@@ -165,11 +168,18 @@ class StreamingOutput(io.BufferedIOBase):
         with self.condition:
             self.buffer = io.BytesIO()
             self.frame = None
+            self._last_frame_at = None
             self.condition.notify_all()
+
+    def frame_age(self) -> Optional[float]:
+        with self.condition:
+            if self._last_frame_at is None:
+                return None
+            return time.monotonic() - self._last_frame_at
 
 
 class CameraManager:
-    def __init__(self, index, width, height, framerate, quality, name, snapshot_width=None, snapshot_height=None, snapshot_quality=95, autofocus=False, camera_id=None):
+    def __init__(self, index, width, height, framerate, quality, name, snapshot_width=None, snapshot_height=None, snapshot_quality=95, autofocus=False, camera_id=None, watchdog_timeout=10.0):
         self.index = index
         self.camera_id = camera_id
         self.width = width
@@ -188,6 +198,9 @@ class CameraManager:
         self._video_config = None
         self._streaming = False
         self._clients = 0
+        self._watchdog_timeout = watchdog_timeout
+        self._watchdog_stop = threading.Event()
+        self._watchdog_thread: Optional[threading.Thread] = None
 
     def _ensure_camera(self):
         if self._picam2 is None:
@@ -239,27 +252,81 @@ class CameraManager:
             except Exception as exc:
                 logging.warning("Failed to switch %s back to continuous autofocus: %s", self.name, exc)
 
+    def _start_stream_locked(self):
+        self._ensure_camera()
+        try:
+            self._picam2.stop()
+        except Exception:
+            pass
+        self._picam2.configure(self._video_config)
+        actual_size = tuple(self._picam2.camera_configuration()['main']['size'])
+        if actual_size != (self.width, self.height):
+            logging.warning('Camera %s adjusted resolution to %dx%d (requested %dx%d)', self.name, actual_size[0], actual_size[1], self.width, self.height)
+        else:
+            logging.info('Camera %s runs at requested resolution %dx%d', self.name, actual_size[0], actual_size[1])
+        self._picam2.start()
+        self._enable_autofocus(mode=controls.AfModeEnum.Continuous)
+        self._run_autofocus_cycle(wait=3.0, resume_continuous=True)
+        self.output.reset()
+        self._picam2.start_recording(MJPEGEncoder(), FileOutput(self.output), quality=self.quality)
+        self._streaming = True
+
+    def _stop_stream_locked(self):
+        if not self._streaming:
+            return
+        try:
+            self._picam2.stop_recording()
+        except Exception:
+            pass
+        try:
+            self._picam2.stop()
+        except Exception:
+            pass
+        try:
+            self._picam2.close()
+        except Exception:
+            pass
+        self._picam2 = None
+        self._video_config = None
+        self._streaming = False
+        self.output.reset()
+
+    def _restart_stream_locked(self):
+        logging.warning("Restarting stream for %s", self.name)
+        self._stop_stream_locked()
+        self._start_stream_locked()
+
+    def _watchdog_loop(self):
+        if self._watchdog_timeout <= 0:
+            return
+        logging.info("Watchdog enabled for %s (timeout %.1fs)", self.name, self._watchdog_timeout)
+        while not self._watchdog_stop.wait(1.0):
+            restart_error = None
+            with self._lock:
+                if not self._streaming or self._clients == 0:
+                    continue
+                age = self.output.frame_age()
+                if age is None or age < self._watchdog_timeout:
+                    continue
+                logging.warning("No frames from %s for %.1fs", self.name, age)
+                try:
+                    self._restart_stream_locked()
+                except Exception as exc:
+                    restart_error = exc
+            if restart_error is not None:
+                logging.warning("Watchdog restart for %s failed: %s", self.name, restart_error)
+                time.sleep(1.0)
+
     def start_stream(self):
         with self._lock:
             self._clients += 1
             if not self._streaming:
                 logging.info("Starting stream for %s", self.name)
-                self._ensure_camera()
-                try:
-                    self._picam2.stop()
-                except Exception:
-                    pass
-                self._picam2.configure(self._video_config)
-                actual_size = tuple(self._picam2.camera_configuration()['main']['size'])
-                if actual_size != (self.width, self.height):
-                    logging.warning('Camera %s adjusted resolution to %dx%d (requested %dx%d)', self.name, actual_size[0], actual_size[1], self.width, self.height)
-                else:
-                    logging.info('Camera %s runs at requested resolution %dx%d', self.name, actual_size[0], actual_size[1])
-                self._picam2.start()
-                self._enable_autofocus(mode=controls.AfModeEnum.Continuous)
-                self._run_autofocus_cycle(wait=3.0, resume_continuous=True)
-                self._picam2.start_recording(MJPEGEncoder(), FileOutput(self.output), quality=self.quality)
-                self._streaming = True
+                self._start_stream_locked()
+                if self._watchdog_thread is None or not self._watchdog_thread.is_alive():
+                    self._watchdog_stop.clear()
+                    self._watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
+                    self._watchdog_thread.start()
 
     def stop_stream(self):
         with self._lock:
@@ -267,13 +334,8 @@ class CameraManager:
                 self._clients -= 1
             if self._clients == 0 and self._streaming:
                 logging.info("Stopping stream for %s", self.name)
-                self._picam2.stop_recording()
-                self._picam2.stop()
-                self._picam2.close()
-                self._picam2 = None
-                self._video_config = None
-                self._streaming = False
-                self.output.reset()
+                self._watchdog_stop.set()
+                self._stop_stream_locked()
 
     def snapshot(self, timeout=2.0):
         if self._streaming:
@@ -363,7 +425,7 @@ def probe_camera(index: int, camera_id: Optional[str] = None) -> bool:
     try:
         probe = Picamera2(index)
     except Exception as exc:
-        logging.warning("Inicializace kamery s indexem %d selhala: %s", index, exc)
+        logging.warning("Camera initialization for index %d failed: %s", index, exc)
         return False
 
     try:
@@ -476,7 +538,7 @@ def serve(manager: CameraManager, port: int, bind_host: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Software MJPEG streaming portal for Picamera2.")
-    parser.add_argument("--camera-index", type=int, default=0, help="Index kamery (default 0)")
+    parser.add_argument("--camera-index", type=int, default=0, help="Camera index (default 0)")
     parser.add_argument("--camera-id", type=str, default=None, help="Persistent camera ID from Picamera2.global_camera_info()")
     parser.add_argument("--width", type=int, default=1280, help="Image width")
     parser.add_argument("--height", type=int, default=720, help="Image height")
@@ -488,13 +550,14 @@ def main():
         type=str,
         default="medium",
         choices=list(QUALITY_MAP.keys()),
-        help="Profil kvality MJPEG"
+        help="MJPEG quality profile"
     )
-    parser.add_argument("--name", type=str, default="Camera", help="Popisek kamery")
+    parser.add_argument("--name", type=str, default="Camera", help="Camera label")
     parser.add_argument("--snapshot-width", type=int, default=0, help="Snapshot width (0 = same as stream)")
     parser.add_argument("--snapshot-height", type=int, default=0, help="Snapshot height (0 = same as stream)")
-    parser.add_argument("--snapshot-quality", type=int, default=95, help="JPEG kvalita snapshotu (1-100)")
+    parser.add_argument("--snapshot-quality", type=int, default=95, help="Snapshot JPEG quality (1-100)")
     parser.add_argument("--autofocus", type=int, choices=[0, 1], default=0, help="Enable continuous autofocus (1 = yes)")
+    parser.add_argument("--watchdog-timeout", type=float, default=10.0, help="Restart stream if no frames arrive within N seconds (0 = disable)")
     args = parser.parse_args()
 
     if not 1 <= args.snapshot_quality <= 100:
@@ -521,6 +584,7 @@ def main():
         snapshot_quality=args.snapshot_quality,
         autofocus=bool(args.autofocus),
         camera_id=args.camera_id,
+        watchdog_timeout=args.watchdog_timeout,
     )
     serve(manager, args.port, args.bind)
 
