@@ -7,6 +7,10 @@ Manual fan override (writes /run/fan_override):
     sudo /home/vojrik/Scripts/Fan/set_fan_override.sh silent
     sudo /home/vojrik/Scripts/Fan/set_fan_override.sh 40
 
+MQTT state:
+    topic: rpi/fan/state
+    payload: 0-100 (percent)
+
 Start the scheduler in the foreground:
     sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py start
 
