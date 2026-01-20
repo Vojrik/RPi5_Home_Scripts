@@ -7,6 +7,11 @@ Works with overclocking (arm_freq=2800 in /boot/firmware/config.txt): uses 'sche
 
 import time, datetime, pathlib, os, sys, argparse, json
 
+try:
+    import paho.mqtt.client as mqtt
+except Exception:  # pragma: no cover - optional dependency for status publish
+    mqtt = None
+
 # -------- default configuration --------
 NIGHT_START = "22:00"
 NIGHT_END   = "08:30"
@@ -37,6 +42,8 @@ MODE_FILE  = STATE_DIR/"mode"
 OVR_FILE   = STATE_DIR/"override_until"
 LAST_WRITTEN = {"gov": None, "min": None, "max": None, "fan": None, "force_high_fallback": None}
 _AVAILABLE_GOVS = None
+_MQTT_CFG = None
+_MQTT_LAST = None
 
 def log(msg): print(time.strftime("%H:%M:%S"), msg, flush=True)
 
@@ -69,6 +76,50 @@ def available_freqs():
     mn = _read_int(sample/"cpuinfo_min_freq")
     mx = _read_int(sample/"cpuinfo_max_freq")
     return [v for v in (mn, mx) if v]
+
+def load_mqtt_config():
+    global _MQTT_CFG
+    if _MQTT_CFG is not None:
+        return _MQTT_CFG
+    config_path = pathlib.Path("/home/vojrik/homeassistant/.storage/core.config_entries")
+    try:
+        data = json.loads(config_path.read_text())
+    except Exception:
+        _MQTT_CFG = None
+        return None
+    for entry in data.get("data", {}).get("entries", []):
+        if entry.get("domain") == "mqtt":
+            cfg = entry.get("data", {})
+            _MQTT_CFG = {
+                "host": cfg.get("broker", "127.0.0.1"),
+                "port": int(cfg.get("port", 1883)),
+                "username": cfg.get("username"),
+                "password": cfg.get("password"),
+            }
+            return _MQTT_CFG
+    _MQTT_CFG = None
+    return None
+
+def publish_mode(mode: str):
+    global _MQTT_LAST
+    normalized = {"force-high": "high", "force-low": "low", "day-auto": "auto"}.get(mode, mode)
+    if normalized == _MQTT_LAST:
+        return
+    if mqtt is None:
+        return
+    cfg = load_mqtt_config()
+    if not cfg:
+        return
+    try:
+        client = mqtt.Client(client_id="cpu_scheduler", clean_session=True)
+        if cfg.get("username"):
+            client.username_pw_set(cfg.get("username"), cfg.get("password"))
+        client.connect(cfg["host"], cfg["port"], 10)
+        client.publish("rpi/cpu_scheduler/mode", normalized, retain=True)
+        client.disconnect()
+        _MQTT_LAST = normalized
+    except Exception:
+        pass
 
 def clamp_freq(khz: int):
     av = available_freqs()
@@ -216,7 +267,9 @@ def load_cfg():
 
 def save_cfg(cfg): CFG_FILE.write_text(json.dumps(cfg, indent=2,sort_keys=True))
 def get_mode(): return MODE_FILE.read_text().strip() if MODE_FILE.exists() else "auto"
-def set_mode(m): MODE_FILE.write_text(m+"\n")
+def set_mode(m):
+    MODE_FILE.write_text(m + "\n")
+    publish_mode(m)
 def set_override(sec): 
     if sec<=0: OVR_FILE.unlink(missing_ok=True)
     else: OVR_FILE.write_text(str(int(time.time()+sec)))
@@ -244,6 +297,7 @@ def daemon_loop():
     while True:
         mode=get_mode(); now=datetime.datetime.now()
         is_night=in_night(now,cfg["night_start"],cfg["night_end"])
+        publish_mode(mode)
 
         # Day/night switching
         if last_is_night is True and is_night is False:
@@ -359,7 +413,7 @@ def main():
     args=ap.parse_args()
     if args.cmd!="status" and os.geteuid()!=0:
         print("Run as root (except for 'status')",file=sys.stderr); sys.exit(1)
-    if not CPUS: print("Nenalezeno cpufreq",file=sys.stderr); sys.exit(1)
+    if not CPUS: print("cpufreq not found",file=sys.stderr); sys.exit(1)
     if args.cmd=="start": daemon_loop()
     elif args.cmd=="status": cmd_status()
     elif args.cmd=="set": cmd_set(args)

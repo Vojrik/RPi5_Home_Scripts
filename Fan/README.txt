@@ -1,6 +1,12 @@
 Runtime fan control commands
 ============================
 
+Manual fan override (writes /run/fan_override):
+    sudo /home/vojrik/Scripts/Fan/set_fan_override.sh auto
+    sudo /home/vojrik/Scripts/Fan/set_fan_override.sh normal
+    sudo /home/vojrik/Scripts/Fan/set_fan_override.sh silent
+    sudo /home/vojrik/Scripts/Fan/set_fan_override.sh 40
+
 Start the scheduler in the foreground:
     sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py start
 

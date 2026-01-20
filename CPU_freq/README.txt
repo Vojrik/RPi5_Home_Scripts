@@ -14,6 +14,11 @@ Available modes:
     sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py mode force-high
     sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py mode auto --override 7200
 
+HA helper (maps Auto/High/Low to scheduler modes):
+    sudo /home/vojrik/Scripts/CPU_freq/set_cpu_scheduler_mode.sh auto
+    sudo /home/vojrik/Scripts/CPU_freq/set_cpu_scheduler_mode.sh high
+    sudo /home/vojrik/Scripts/CPU_freq/set_cpu_scheduler_mode.sh low
+
 Change configuration values (persisted by `set`; restart the service to apply):
     sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py set --night 22:00-07:00
     sudo /home/vojrik/Scripts/CPU_freq/cpu-scheduler.py set --idle-max-khz 1200000 --perf-max-khz 2800000
