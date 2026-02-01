@@ -34,9 +34,28 @@ sudo python3 /home/vojrik/Scripts/GPIO_control/camera_servo_control.py \
   --pan 0 --tilt 0 --backend pwm-pio --hold-seconds 5
 ```
 
+Relativni krok (napr. pro tlacitka vlevo/vpravo) se stavem v souboru:
+
+```
+sudo python3 /home/vojrik/Scripts/GPIO_control/camera_servo_control.py \
+  --pan-step -5 --state-file /tmp/camera_servo_state.json \
+  --backend pwm-pio --hold-seconds 0.2
+```
+
+Vypnuti PWM vystupu:
+
+```
+sudo python3 /home/vojrik/Scripts/GPIO_control/camera_servo_control.py \
+  --disable --backend pwm-pio
+```
+
 ## Volitelne parametry
 - `--pwmchip` vynuti konkretni pwmchip (napr. `2` nebo `/sys/class/pwm/pwmchip2`).
 - `--pan-channel` a `--tilt-channel` urci index kanalu v pwmchipu.
+- `--pan-step` / `--tilt-step` provadi relativni kroky a uklada stav do JSON souboru.
+- `--state-file` urcuje kam se uklada posledni poloha (default `/tmp/camera_servo_state.json`).
+- `--pan-min-percent`, `--pan-max-percent`, `--tilt-min-percent`, `--tilt-max-percent` osetruji krajni dorazy.
+- `--disable` vypne PWM vystupy bez pohybu.
 
 ## Poznamky
 - Defaultni frekvence je 50 Hz.

@@ -3,6 +3,8 @@ import argparse
 import ctypes
 import errno
 import glob
+import json
+import struct
 import os
 import signal
 import sys
@@ -20,6 +22,7 @@ DEFAULT_FREQ_HZ = 50
 DEFAULT_MIN_US = 1000
 DEFAULT_MAX_US = 2000
 DEFAULT_HOLD_SECONDS = None
+DEFAULT_STATE_FILE = "/tmp/camera_servo_state.json"
 
 
 class ServoController:
@@ -102,6 +105,15 @@ class SysfsPwmController:
                 pass
         self.active = []
 
+    def disable_channel(self, channel_index):
+        chip_path, channel = self.channels[channel_index]
+        pwm_path = os.path.join(chip_path, f"pwm{channel}")
+        try:
+            self._write(os.path.join(pwm_path, "duty_cycle"), 0)
+            self._write(os.path.join(pwm_path, "enable"), 0)
+        except FileNotFoundError:
+            pass
+
 
 def clamp(value, low, high):
     return max(low, min(high, value))
@@ -119,11 +131,37 @@ def parse_args():
     )
     parser.add_argument("--pan", type=float, help="Pan position in range -100..100 (0=center).")
     parser.add_argument("--tilt", type=float, help="Tilt position in range -100..100 (0=center).")
+    parser.add_argument("--pan-step", type=float, help="Relative pan step in percent (-100..100).")
+    parser.add_argument("--tilt-step", type=float, help="Relative tilt step in percent (-100..100).")
     parser.add_argument("--freq-hz", type=int, default=DEFAULT_FREQ_HZ, help="PWM frequency in Hz.")
     parser.add_argument("--pan-min-us", type=int, default=DEFAULT_MIN_US, help="Pan min pulse width in us.")
     parser.add_argument("--pan-max-us", type=int, default=DEFAULT_MAX_US, help="Pan max pulse width in us.")
     parser.add_argument("--tilt-min-us", type=int, default=DEFAULT_MIN_US, help="Tilt min pulse width in us.")
     parser.add_argument("--tilt-max-us", type=int, default=DEFAULT_MAX_US, help="Tilt max pulse width in us.")
+    parser.add_argument(
+        "--pan-min-percent",
+        type=float,
+        default=-100.0,
+        help="Clamp pan position to this minimum percent.",
+    )
+    parser.add_argument(
+        "--pan-max-percent",
+        type=float,
+        default=100.0,
+        help="Clamp pan position to this maximum percent.",
+    )
+    parser.add_argument(
+        "--tilt-min-percent",
+        type=float,
+        default=-100.0,
+        help="Clamp tilt position to this minimum percent.",
+    )
+    parser.add_argument(
+        "--tilt-max-percent",
+        type=float,
+        default=100.0,
+        help="Clamp tilt position to this maximum percent.",
+    )
     parser.add_argument(
         "--hold-seconds",
         type=float,
@@ -131,6 +169,26 @@ def parse_args():
         help="How long to hold PWM before stopping (ignored with --keep).",
     )
     parser.add_argument("--keep", action="store_true", help="Keep PWM running until interrupted.")
+    parser.add_argument(
+        "--leave-enabled",
+        action="store_true",
+        help="Leave PWM enabled after exiting (pwm-pio only).",
+    )
+    parser.add_argument(
+        "--disable",
+        action="store_true",
+        help="Disable PWM outputs and exit (ignores --pan/--tilt).",
+    )
+    parser.add_argument(
+        "--state-file",
+        default=None,
+        help="Path to JSON state file for relative steps.",
+    )
+    parser.add_argument(
+        "--clear-state",
+        action="store_true",
+        help="Remove the state file after the command completes.",
+    )
     parser.add_argument(
         "--pan-offset-us",
         type=int,
@@ -207,6 +265,13 @@ def validate_percent(value, label):
         return
     if value < -100 or value > 100:
         raise ValueError(f"{label} must be in range -100..100.")
+
+
+def validate_percent_limits(min_percent, max_percent, label):
+    if min_percent < -100 or max_percent > 100:
+        raise ValueError(f"{label} percent limits must be within -100..100.")
+    if min_percent >= max_percent:
+        raise ValueError(f"{label} percent min must be less than max.")
 
 
 def enable_realtime():
@@ -308,6 +373,22 @@ def _read_text(path):
     except FileNotFoundError:
         return ""
 
+def _read_u32_be(raw, index):
+    start = index * 4
+    if len(raw) < start + 4:
+        return None
+    return struct.unpack(">I", raw[start:start + 4])[0]
+
+
+def pwm_pio_gpio_for_chip(chip):
+    try:
+        with open(os.path.join(chip, "device", "of_node", "gpios"), "rb") as handle:
+            raw = handle.read()
+    except FileNotFoundError:
+        return None
+    gpio = _read_u32_be(raw, 1)
+    return gpio
+
 
 def pwm_pio_available():
     return bool(find_pwm_pio_chips())
@@ -352,6 +433,56 @@ def allocate_pwm_channels(chips, needed):
             f"Not enough pwm-pio channels for {needed} servo(s)."
         )
     return channels[:needed]
+
+
+def allocate_pwm_channels_by_gpio(chips, servo_names):
+    gpio_map = {}
+    for chip in chips:
+        gpio = pwm_pio_gpio_for_chip(chip)
+        if gpio is not None:
+            gpio_map[gpio] = chip
+
+    channels = []
+    for name in servo_names:
+        target_gpio = PAN_GPIO if name == "pan" else TILT_GPIO
+        chip = gpio_map.get(target_gpio)
+        if not chip:
+            return None
+        channels.append((chip, 0))
+    return channels
+
+
+def read_state(path):
+    try:
+        with open(path, "r", encoding="ascii") as handle:
+            data = json.load(handle)
+            if isinstance(data, dict):
+                return data
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    return {}
+
+
+def write_state(path, pan, tilt):
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    payload = {"pan": pan, "tilt": tilt}
+    temp_path = f"{path}.tmp"
+    with open(temp_path, "w", encoding="ascii") as handle:
+        json.dump(payload, handle)
+    os.replace(temp_path, path)
+
+
+def resolve_target(name, absolute, step, state, min_percent, max_percent):
+    if absolute is None and step is None:
+        return None
+    if absolute is None:
+        base = state.get(name, 0.0)
+        value = base + step
+    else:
+        value = absolute
+    return clamp(value, min_percent, max_percent)
 
 
 def run_bitbang(
@@ -433,15 +564,15 @@ def run_bitbang(
 def main():
     args = parse_args()
 
-    if args.pan is None and args.tilt is None:
-        print("Specify at least one of --pan or --tilt.")
-        return 2
-
     try:
         validate_limits(args.pan_min_us, args.pan_max_us, "Pan")
         validate_limits(args.tilt_min_us, args.tilt_max_us, "Tilt")
         validate_percent(args.pan, "Pan")
         validate_percent(args.tilt, "Tilt")
+        validate_percent(args.pan_step, "Pan step")
+        validate_percent(args.tilt_step, "Tilt step")
+        validate_percent_limits(args.pan_min_percent, args.pan_max_percent, "Pan")
+        validate_percent_limits(args.tilt_min_percent, args.tilt_max_percent, "Tilt")
     except ValueError as exc:
         print(str(exc))
         return 2
@@ -456,17 +587,50 @@ def main():
         print(str(exc))
         return 2
 
+    state_file = args.state_file
+    if state_file is None and (args.pan_step is not None or args.tilt_step is not None):
+        state_file = DEFAULT_STATE_FILE
+
+    state = read_state(state_file) if state_file else {}
+    target_pan = resolve_target(
+        "pan",
+        args.pan,
+        args.pan_step,
+        state,
+        args.pan_min_percent,
+        args.pan_max_percent,
+    )
+    target_tilt = resolve_target(
+        "tilt",
+        args.tilt,
+        args.tilt_step,
+        state,
+        args.tilt_min_percent,
+        args.tilt_max_percent,
+    )
+
+    if args.disable:
+        target_pan = None
+        target_tilt = None
+
+    if target_pan is None and target_tilt is None and not args.disable:
+        print("Specify at least one of --pan, --tilt, --pan-step, or --tilt-step.")
+        return 2
+
     controller = ServoController()
     pwm_pio_controller = None
     pwm_channel_map = {}
     if backend == "pwm-pio":
         active_servos = []
-        if args.pan is not None:
-            active_servos.append("pan")
-        if args.tilt is not None:
-            active_servos.append("tilt")
+        if args.disable:
+            active_servos.extend(["pan", "tilt"])
+        else:
+            if target_pan is not None:
+                active_servos.append("pan")
+            if target_tilt is not None:
+                active_servos.append("tilt")
         if not active_servos:
-            print("Specify at least one of --pan or --tilt.")
+            print("Specify at least one of --pan, --tilt, --pan-step, or --tilt-step.")
             return 2
         chip_override = pwmchip_from_arg(args.pwmchip)
         if chip_override:
@@ -483,7 +647,9 @@ def main():
                     "/boot/firmware/config.txt and reboot."
                 )
                 return 2
-            channels = allocate_pwm_channels(chips, len(active_servos))
+            channels = allocate_pwm_channels_by_gpio(chips, active_servos)
+            if channels is None:
+                channels = allocate_pwm_channels(chips, len(active_servos))
         pwm_pio_controller = SysfsPwmController(channels, args.freq_hz)
         for index, servo_name in enumerate(active_servos):
             pwm_channel_map[servo_name] = index
@@ -505,13 +671,13 @@ def main():
     period_us = int(round(1_000_000 / float(args.freq_hz)))
     pan_offset = args.pan_offset_us
     tilt_offset = args.tilt_offset_us
-    if args.stagger and args.pan is not None and args.tilt is not None:
+    if args.stagger and target_pan is not None and target_tilt is not None:
         tilt_offset = period_us // 2
 
     pan_us = 0
     tilt_us = 0
-    if args.pan is not None:
-        pan_percent = clamp(args.pan, -100, 100)
+    if target_pan is not None:
+        pan_percent = clamp(target_pan, args.pan_min_percent, args.pan_max_percent)
         pan_us = percent_to_pulse(pan_percent, args.pan_min_us, args.pan_max_us)
         if backend == "pwm-pio":
             pwm_pio_controller.start_servo(pwm_channel_map["pan"], pan_us)
@@ -523,8 +689,8 @@ def main():
                 f" (offset {pan_offset} us)"
             )
 
-    if args.tilt is not None:
-        tilt_percent = clamp(args.tilt, -100, 100)
+    if target_tilt is not None:
+        tilt_percent = clamp(target_tilt, args.tilt_min_percent, args.tilt_max_percent)
         tilt_us = percent_to_pulse(tilt_percent, args.tilt_min_us, args.tilt_max_us)
         if backend == "pwm-pio":
             pwm_pio_controller.start_servo(pwm_channel_map["tilt"], tilt_us)
@@ -536,25 +702,48 @@ def main():
                 f" (offset {tilt_offset} us)"
             )
 
+    if args.disable:
+        if backend == "pwm-pio" and pwm_pio_controller is not None:
+            if "pan" in pwm_channel_map:
+                pwm_pio_controller.disable_channel(pwm_channel_map["pan"])
+            if "tilt" in pwm_channel_map:
+                pwm_pio_controller.disable_channel(pwm_channel_map["tilt"])
+        else:
+            controller.stop_all()
+            controller.close()
+        if args.clear_state and state_file:
+            try:
+                os.remove(state_file)
+            except FileNotFoundError:
+                pass
+        return 0
+
+    if state_file:
+        write_state(
+            state_file,
+            pan_percent if target_pan is not None else state.get("pan", 0.0),
+            tilt_percent if target_tilt is not None else state.get("tilt", 0.0),
+        )
+
     if backend == "bitbang":
         print("Using bitbang backend. PWM timing is driven by a real-time loop.")
         if args.busy_wait_us > 0:
             print(f"Busy-wait enabled for last {args.busy_wait_us} us of each edge.")
         if args.max_late_us > 0:
             print(f"Skipping PWM cycle if an edge is late by {args.max_late_us} us.")
-        if args.pan is not None:
+        if target_pan is not None:
             print(
                 f"Pan GPIO{PAN_GPIO}: {pan_percent:.1f}% -> {pan_us} us @ {args.freq_hz} Hz"
                 f" (offset {pan_offset} us)"
             )
-        if args.tilt is not None:
+        if target_tilt is not None:
             print(
                 f"Tilt GPIO{TILT_GPIO}: {tilt_percent:.1f}% -> {tilt_us} us @ {args.freq_hz} Hz"
                 f" (offset {tilt_offset} us)"
             )
         return run_bitbang(
-            pan_us if args.pan is not None else 0,
-            tilt_us if args.tilt is not None else 0,
+            pan_us if target_pan is not None else 0,
+            tilt_us if target_tilt is not None else 0,
             pan_offset,
             tilt_offset,
             args.freq_hz,
@@ -562,8 +751,8 @@ def main():
             args.max_late_us,
             args.hold_seconds,
             args.keep or args.hold_seconds is None,
-            args.pan is not None,
-            args.tilt is not None,
+            target_pan is not None,
+            target_tilt is not None,
         )
 
     if args.keep or args.hold_seconds is None:
@@ -573,10 +762,16 @@ def main():
 
     time.sleep(max(0.0, args.hold_seconds))
     if backend == "pwm-pio" and pwm_pio_controller is not None:
-        pwm_pio_controller.stop_all()
+        if not args.leave_enabled:
+            pwm_pio_controller.stop_all()
     else:
         controller.stop_all()
         controller.close()
+    if args.clear_state and state_file:
+        try:
+            os.remove(state_file)
+        except FileNotFoundError:
+            pass
     return 0
 
 
