@@ -8,6 +8,7 @@ import time
 import errno
 import subprocess
 import multiprocessing as mp
+import shutil
 
 import board
 import busio
@@ -23,6 +24,8 @@ i2c = None
 _OLED_DISABLED = False
 _FAILS = 0
 _HARD_RESET_AFTER = 2  # escalate to a hard restart after repeated failures
+_HARD_RESET_COOLDOWN_SEC = 10
+_LAST_HARD_RESET_AT = 0.0
 
 # --- Fonts ---
 font = {
@@ -33,6 +36,7 @@ font = {
 }
 
 I2C_LOCK_PATH = "/home/vojrik/.i2c-1.lock"
+I2C_DESIGNWARE_DEVICE = "1f00074000.i2c"
 
 # --- Fault-tolerant I2C / OLED helpers ---
 
@@ -64,20 +68,91 @@ def _mk_i2c():
     # Calm the bus by lowering the frequency
     return busio.I2C(board.SCL, board.SDA, frequency=100_000)
 
+def _run_quiet(cmd):
+    subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+def _systemctl(action, unit):
+    _run_quiet(["systemctl", action, unit])
+
+def _sysfs_write(path, value):
+    try:
+        with open(path, "w", encoding="ascii") as handle:
+            handle.write(value)
+    except Exception:
+        pass
+
+def _reset_i2c_designware():
+    unbind_path = "/sys/bus/platform/drivers/i2c_designware/unbind"
+    bind_path = "/sys/bus/platform/drivers/i2c_designware/bind"
+    if not (os.path.exists(unbind_path) and os.path.exists(bind_path)):
+        return False
+    _sysfs_write(unbind_path, I2C_DESIGNWARE_DEVICE)
+    time.sleep(0.05)
+    _sysfs_write(bind_path, I2C_DESIGNWARE_DEVICE)
+    return True
+
+def _gpio_i2c_unstick():
+    if shutil.which("pinctrl") is not None:
+        # Pulse SCL while SDA is pulled up to release stuck slaves.
+        _run_quiet(["pinctrl", "set", "2", "ip", "pu"])
+        _run_quiet(["pinctrl", "set", "3", "op", "dh"])
+        for _ in range(9):
+            _run_quiet(["pinctrl", "set", "3", "op", "dl"])
+            time.sleep(0.001)
+            _run_quiet(["pinctrl", "set", "3", "op", "dh"])
+            time.sleep(0.001)
+        # STOP condition: SDA low -> high while SCL high.
+        _run_quiet(["pinctrl", "set", "2", "op", "dl"])
+        time.sleep(0.001)
+        _run_quiet(["pinctrl", "set", "3", "op", "dh"])
+        time.sleep(0.001)
+        _run_quiet(["pinctrl", "set", "2", "ip", "pu"])
+        _run_quiet(["pinctrl", "set", "2", "a3"])
+        _run_quiet(["pinctrl", "set", "3", "a3"])
+        return
+    if shutil.which("raspi-gpio") is None:
+        return
+    # Pulse SCL while SDA is pulled up to release stuck slaves.
+    _run_quiet(["raspi-gpio", "set", "2", "ip", "pu"])
+    _run_quiet(["raspi-gpio", "set", "3", "op", "dh"])
+    for _ in range(9):
+        _run_quiet(["raspi-gpio", "set", "3", "op", "dl"])
+        time.sleep(0.001)
+        _run_quiet(["raspi-gpio", "set", "3", "op", "dh"])
+        time.sleep(0.001)
+    # STOP condition: SDA low -> high while SCL high.
+    _run_quiet(["raspi-gpio", "set", "2", "op", "dl"])
+    time.sleep(0.001)
+    _run_quiet(["raspi-gpio", "set", "3", "op", "dh"])
+    time.sleep(0.001)
+    _run_quiet(["raspi-gpio", "set", "2", "ip", "pu"])
+
 def _hard_i2c_restart():
     # Reload the drivers in case the bus is stuck
+    global _LAST_HARD_RESET_AT
+    if os.geteuid() != 0:
+        return
+    now = time.time()
+    if now - _LAST_HARD_RESET_AT < _HARD_RESET_COOLDOWN_SEC:
+        return
+    _LAST_HARD_RESET_AT = now
+    _systemctl("stop", "nas-ina219.service")
     cmds = [
         ["modprobe", "-r", "i2c_bcm2835"],
         ["modprobe", "-r", "i2c-dev"],
+    ]
+    for c in cmds:
+        _run_quiet(c)
+    _gpio_i2c_unstick()
+    _reset_i2c_designware()
+    cmds = [
         ["modprobe", "i2c_bcm2835"],
         ["modprobe", "i2c-dev"],
     ]
     for c in cmds:
-        try:
-            subprocess.run(c, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception:
-            pass
+        _run_quiet(c)
     time.sleep(0.3)
+    _systemctl("start", "nas-ina219.service")
 
 def disp_init():
     """Initialise OLED and I2C while clearing any previous state."""

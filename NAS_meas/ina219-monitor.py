@@ -45,6 +45,8 @@ CALIBRATION_VALUE = int(0.04096 / (CURRENT_LSB_A * RSHUNT_OHM))
 
 ENV_FILE = os.path.join(os.path.dirname(__file__), ".env")
 I2C_LOCK_PATH = "/home/vojrik/.i2c-1.lock"
+I2C_REOPEN_AFTER_ERRORS = 3
+I2C_REOPEN_MIN_INTERVAL_SEC = 5.0
 
 
 def load_env_file(path):
@@ -117,6 +119,37 @@ def i2c_lock(timeout=1.0):
             fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
             os.close(fd)
+
+def open_bus(bus_num):
+    return SMBus(bus_num)
+
+def reopen_bus(bus, bus_num):
+    try:
+        bus.close()
+    except Exception:
+        pass
+    return open_bus(bus_num)
+
+def init_ina219(bus, addr, allow_scan=True):
+    delay = 0.05
+    for _ in range(3):
+        try:
+            with i2c_lock(timeout=3.0):
+                if addr is None:
+                    if not allow_scan:
+                        raise RuntimeError("INA219 address missing.")
+                    addr = find_ina219_address(bus)
+                if addr is None:
+                    raise RuntimeError("INA219 not found on I2C addresses 0x40-0x4F.")
+
+                write_register(bus, addr, REG_CONFIG, CONFIG_32V_80MV_CONT)
+                write_register(bus, addr, REG_CALIBRATION, CALIBRATION_VALUE)
+            return addr
+        except TimeoutError:
+            time.sleep(delay)
+            delay *= 2
+            continue
+    raise RuntimeError("I2C lock timeout during INA219 init.")
 
 
 def build_mqtt_config(env):
@@ -266,79 +299,97 @@ def main():
             return 1
 
     try:
-        bus = SMBus(args.i2c_bus)
+        bus = open_bus(args.i2c_bus)
     except FileNotFoundError:
         print(f"I2C bus /dev/i2c-{args.i2c_bus} not found. Enable I2C in system config.")
         return 1
 
-    with bus:
-        with i2c_lock():
-            if args.i2c_address is None:
-                addr = find_ina219_address(bus)
-            else:
-                addr = int(args.i2c_address)
-            if addr is None:
-                print("INA219 not found on I2C addresses 0x40-0x4F.")
-                return 1
+    addr = None
+    try:
+        addr = init_ina219(bus, args.i2c_address, allow_scan=args.i2c_address is None)
+    except RuntimeError as exc:
+        print(str(exc))
+        return 1
 
-            write_register(bus, addr, REG_CONFIG, CONFIG_32V_80MV_CONT)
-            write_register(bus, addr, REG_CALIBRATION, CALIBRATION_VALUE)
+    print(f"INA219 detected at 0x{addr:02X}")
+    print(f"Rshunt={RSHUNT_OHM:.6f} Ohm, current_lsb={CURRENT_LSB_A:.9f} A")
+    print("Press Ctrl+C to stop.")
 
-        print(f"INA219 detected at 0x{addr:02X}")
-        print(f"Rshunt={RSHUNT_OHM:.6f} Ohm, current_lsb={CURRENT_LSB_A:.9f} A")
-        print("Press Ctrl+C to stop.")
-
-        last_error_at = 0.0
-        last_availability_at = 0.0
-        try:
-            while True:
-                try:
-                    shunt_raw, bus_raw, current_raw, power_raw = read_measurements(bus, addr)
-                except OSError as exc:
-                    now = time.time()
-                    if now - last_error_at > 5:
-                        print(f"I2C read failed: {exc}")
-                        last_error_at = now
-                    time.sleep(args.interval)
-                    continue
-
-                shunt_voltage_v = shunt_raw * 10e-6
-                bus_voltage_v = ((bus_raw >> 3) * 4e-3)
-                # Force positive display if sensor is wired with reversed polarity.
-                current_a = abs(current_raw * CURRENT_LSB_A)
-                power_w = power_raw * POWER_LSB_W
-
-                # Total voltage is bus voltage plus shunt drop.
-                total_voltage_v = bus_voltage_v + shunt_voltage_v
-
-                print(
-                    f"U={total_voltage_v:6.3f} V | "
-                    f"I={current_a:6.3f} A | "
-                    f"P={power_w:7.3f} W"
-                )
-
-                if mqtt_client and mqtt_cfg:
-                    mqtt_client.publish(f"{mqtt_cfg['base_topic']}/voltage", f"{total_voltage_v:.6f}")
-                    mqtt_client.publish(f"{mqtt_cfg['base_topic']}/current", f"{current_a:.6f}")
-                    mqtt_client.publish(f"{mqtt_cfg['base_topic']}/power", f"{power_w:.6f}")
-                    now = time.time()
-                    if now - last_availability_at > 30:
-                        mqtt_client.publish(
-                            f"{mqtt_cfg['base_topic']}/status",
-                            "online",
-                            retain=True,
+    last_error_at = 0.0
+    last_availability_at = 0.0
+    last_reopen_at = 0.0
+    consecutive_errors = 0
+    try:
+        while True:
+            try:
+                shunt_raw, bus_raw, current_raw, power_raw = read_measurements(bus, addr)
+                consecutive_errors = 0
+            except (OSError, TimeoutError) as exc:
+                now = time.time()
+                consecutive_errors += 1
+                if now - last_error_at > 5:
+                    print(f"I2C read failed: {exc}")
+                    last_error_at = now
+                if (
+                    consecutive_errors >= I2C_REOPEN_AFTER_ERRORS
+                    and now - last_reopen_at >= I2C_REOPEN_MIN_INTERVAL_SEC
+                ):
+                    try:
+                        bus = reopen_bus(bus, args.i2c_bus)
+                        addr = init_ina219(
+                            bus,
+                            args.i2c_address,
+                            allow_scan=args.i2c_address is None,
                         )
-                        last_availability_at = now
-
+                        consecutive_errors = 0
+                        last_reopen_at = now
+                    except Exception as reopen_exc:
+                        print(f"I2C reopen failed: {reopen_exc}")
+                        last_reopen_at = now
                 time.sleep(args.interval)
-        except KeyboardInterrupt:
-            pass
-        finally:
+                continue
+
+            shunt_voltage_v = shunt_raw * 10e-6
+            bus_voltage_v = ((bus_raw >> 3) * 4e-3)
+            # Force positive display if sensor is wired with reversed polarity.
+            current_a = abs(current_raw * CURRENT_LSB_A)
+            power_w = power_raw * POWER_LSB_W
+
+            # Total voltage is bus voltage plus shunt drop.
+            total_voltage_v = bus_voltage_v + shunt_voltage_v
+
+            print(
+                f"U={total_voltage_v:6.3f} V | "
+                f"I={current_a:6.3f} A | "
+                f"P={power_w:7.3f} W"
+            )
+
             if mqtt_client and mqtt_cfg:
-                availability_topic = f"{mqtt_cfg['base_topic']}/status"
-                mqtt_client.publish(availability_topic, "offline", retain=True)
-                mqtt_client.loop_stop()
-                mqtt_client.disconnect()
+                mqtt_client.publish(f"{mqtt_cfg['base_topic']}/voltage", f"{total_voltage_v:.6f}")
+                mqtt_client.publish(f"{mqtt_cfg['base_topic']}/current", f"{current_a:.6f}")
+                mqtt_client.publish(f"{mqtt_cfg['base_topic']}/power", f"{power_w:.6f}")
+                now = time.time()
+                if now - last_availability_at > 30:
+                    mqtt_client.publish(
+                        f"{mqtt_cfg['base_topic']}/status",
+                        "online",
+                        retain=True,
+                    )
+                    last_availability_at = now
+
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        try:
+            bus.close()
+        except Exception:
+            pass
+        if mqtt_client and mqtt_cfg:
+            availability_topic = f"{mqtt_cfg['base_topic']}/status"
+            mqtt_client.publish(availability_topic, "offline", retain=True)
+            mqtt_client.loop_stop()
+            mqtt_client.disconnect()
 
     return 0
 

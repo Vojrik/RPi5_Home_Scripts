@@ -80,7 +80,7 @@ def get_cpu_load():
     _cpu_cache['text'] = text
     return text
 
-# ------ Konfigurace ------
+# ------ Configuration ------
 def read_conf():
     c = defaultdict(dict)
     try:
@@ -116,7 +116,7 @@ def get_disk_info(cache={}):
         cache['time'] = time.time()
     return cache['info']
 
-# ------ Slider helpers pro OLED ------
+# ------ Slider helpers for OLED ------
 def slider_next(pages: dict):
     conf['idx'].value += 1
     return pages[int(conf['idx'].value) % len(pages)]
