@@ -1,7 +1,6 @@
 [Unit]
 Description=Software MJPEG stream for CAM1
-After=dev-video1.device network.target
-BindsTo=dev-video1.device
+After=network.target
 
 [Service]
 EnvironmentFile=/etc/camera-streamer/camera-soft-stream.env
