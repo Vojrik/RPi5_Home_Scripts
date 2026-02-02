@@ -62,13 +62,15 @@ nice -n 10 ionice -c3 \
     findmnt -n -o SOURCE,FSTYPE,OPTIONS / || true
   fi
   sd_matches=""
+  # Only flag genuine error signals, not normal boot/mount messages.
+  error_regex="I/O error|Buffer I/O error|EXT4-fs error|ext4 error|read-only|remounting filesystem read-only|Aborting journal|journal check failed|mmc.*error|sdhci.*error"
   if command -v journalctl >/dev/null 2>&1; then
     sd_matches="$(journalctl -k --since "24 hours ago" \
-      | egrep -i "mmc|sdhci|I/O error|Buffer I/O error|EXT4-fs error|ext4 error|read-only|remount" \
+      | egrep -i "$error_regex" \
       | tail -n 200 || true)"
   else
     sd_matches="$(dmesg \
-      | egrep -i "mmc|sdhci|I/O error|Buffer I/O error|EXT4-fs error|ext4 error|read-only|remount" \
+      | egrep -i "$error_regex" \
       | tail -n 200 || true)"
   fi
   if [[ -n "$sd_matches" ]]; then
@@ -79,7 +81,7 @@ nice -n 10 ionice -c3 \
   echo "$(ts): MicroSD/system disk check end"
 } >> "$LOG" 2>&1
 
-if grep -qiE "mmc|sdhci|I/O error|Buffer I/O error|EXT4-fs error|ext4 error|read-only|remount" "$LOG"; then
+if grep -qiE "I/O error|Buffer I/O error|EXT4-fs error|ext4 error|read-only|remounting filesystem read-only|Aborting journal|journal check failed|mmc.*error|sdhci.*error" "$LOG"; then
   fail=1
   ISSUES+=("microSD/system: kernel log contains storage errors in the last 24h (see log)")
 fi
