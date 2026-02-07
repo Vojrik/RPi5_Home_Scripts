@@ -76,6 +76,16 @@ def _touch_progress():
     _LAST_PROGRESS_AT = time.monotonic()
 
 
+def _sleep_with_heartbeat(seconds):
+    end = time.monotonic() + max(0.0, float(seconds))
+    while True:
+        remaining = end - time.monotonic()
+        if remaining <= 0:
+            return
+        _touch_progress()
+        time.sleep(min(1.0, remaining))
+
+
 def _start_watchdog():
     if WATCHDOG_TIMEOUT_SEC <= 0:
         return
@@ -415,7 +425,7 @@ def auto_slider(lock):
 
         if misc.conf['oled'].get('white-test', False):
             _white_test(lock)
-            misc.slider_sleep()
+            _sleep_with_heartbeat(misc.conf['slider'].get('time', 10.0))
             continue
 
         if misc.conf['slider']['auto']:
@@ -423,10 +433,10 @@ def auto_slider(lock):
                 try:
                     recover_oled(hard=False)
                 except Exception:
-                    time.sleep(2)
+                    _sleep_with_heartbeat(2)
             else:
                 slider(lock)
-                misc.slider_sleep()
+                _sleep_with_heartbeat(misc.conf['slider'].get('time', 10.0))
             continue
 
         slider(lock)
