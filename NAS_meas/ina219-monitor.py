@@ -4,8 +4,10 @@ import contextlib
 import fcntl
 import json
 import os
+import signal
 import socket
 import sys
+import threading
 import time
 
 try:
@@ -47,6 +49,54 @@ ENV_FILE = os.path.join(os.path.dirname(__file__), ".env")
 I2C_LOCK_PATH = "/home/vojrik/.i2c-1.lock"
 I2C_REOPEN_AFTER_ERRORS = 3
 I2C_REOPEN_MIN_INTERVAL_SEC = 5.0
+I2C_OP_TIMEOUT_SEC = float(os.environ.get("I2C_OP_TIMEOUT_SEC", "1.5"))
+WATCHDOG_TIMEOUT_SEC = float(os.environ.get("WATCHDOG_TIMEOUT_SEC", "20"))
+_LAST_PROGRESS_AT = time.monotonic()
+
+
+def touch_progress():
+    global _LAST_PROGRESS_AT
+    _LAST_PROGRESS_AT = time.monotonic()
+
+
+def start_watchdog():
+    if WATCHDOG_TIMEOUT_SEC <= 0:
+        return
+
+    def _watchdog_loop():
+        while True:
+            time.sleep(2.0)
+            if time.monotonic() - _LAST_PROGRESS_AT > WATCHDOG_TIMEOUT_SEC:
+                print(
+                    f"Watchdog: no progress for >{WATCHDOG_TIMEOUT_SEC:.0f}s, exiting for systemd restart.",
+                    file=sys.stderr,
+                )
+                os._exit(1)
+
+    thread = threading.Thread(target=_watchdog_loop, daemon=True, name="ina219-watchdog")
+    thread.start()
+
+
+@contextlib.contextmanager
+def i2c_op_timeout(timeout_sec):
+    if timeout_sec <= 0:
+        yield
+        return
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def _handle_timeout(_signum, _frame):
+        raise TimeoutError("I2C operation timeout")
+
+    old_handler = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, _handle_timeout)
+    old_timer = signal.setitimer(signal.ITIMER_REAL, timeout_sec)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, old_timer[0], old_timer[1])
+        signal.signal(signal.SIGALRM, old_handler)
 
 
 def load_env_file(path):
@@ -72,12 +122,14 @@ def swap_bytes(value):
 
 
 def read_register(bus, addr, reg):
-    value = bus.read_word_data(addr, reg)
+    with i2c_op_timeout(I2C_OP_TIMEOUT_SEC):
+        value = bus.read_word_data(addr, reg)
     return swap_bytes(value)
 
 
 def write_register(bus, addr, reg, value):
-    bus.write_word_data(addr, reg, swap_bytes(value))
+    with i2c_op_timeout(I2C_OP_TIMEOUT_SEC):
+        bus.write_word_data(addr, reg, swap_bytes(value))
 
 
 def find_ina219_address(bus, start=0x40, end=0x4F):
@@ -288,6 +340,7 @@ def main():
 
     env = load_env_file(ENV_FILE)
     args = parse_args(env)
+    start_watchdog()
 
     mqtt_cfg = None if args.no_mqtt else build_mqtt_config(env)
     mqtt_client = None
@@ -321,6 +374,7 @@ def main():
     consecutive_errors = 0
     try:
         while True:
+            touch_progress()
             try:
                 shunt_raw, bus_raw, current_raw, power_raw = read_measurements(bus, addr)
                 consecutive_errors = 0
@@ -347,6 +401,7 @@ def main():
                         print(f"I2C reopen failed: {reopen_exc}")
                         last_reopen_at = now
                 time.sleep(args.interval)
+                touch_progress()
                 continue
 
             shunt_voltage_v = shunt_raw * 10e-6
@@ -378,6 +433,7 @@ def main():
                     last_availability_at = now
 
             time.sleep(args.interval)
+            touch_progress()
     except KeyboardInterrupt:
         pass
     finally:

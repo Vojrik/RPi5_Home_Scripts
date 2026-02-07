@@ -6,9 +6,12 @@ import fcntl
 import os
 import time
 import errno
+import signal
 import subprocess
 import multiprocessing as mp
 import shutil
+import threading
+import sys
 
 import board
 import busio
@@ -26,6 +29,9 @@ _FAILS = 0
 _HARD_RESET_AFTER = 2  # escalate to a hard restart after repeated failures
 _HARD_RESET_COOLDOWN_SEC = 10
 _LAST_HARD_RESET_AT = 0.0
+I2C_OP_TIMEOUT_SEC = float(os.environ.get("I2C_OP_TIMEOUT_SEC", "1.5"))
+WATCHDOG_TIMEOUT_SEC = float(os.environ.get("WATCHDOG_TIMEOUT_SEC", "25"))
+_LAST_PROGRESS_AT = time.monotonic()
 
 # --- Fonts ---
 font = {
@@ -63,6 +69,51 @@ def i2c_lock(timeout=1.0):
             fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
             os.close(fd)
+
+
+def _touch_progress():
+    global _LAST_PROGRESS_AT
+    _LAST_PROGRESS_AT = time.monotonic()
+
+
+def _start_watchdog():
+    if WATCHDOG_TIMEOUT_SEC <= 0:
+        return
+
+    def _watchdog_loop():
+        while True:
+            time.sleep(2.0)
+            if time.monotonic() - _LAST_PROGRESS_AT > WATCHDOG_TIMEOUT_SEC:
+                print(
+                    f"Watchdog: no progress for >{WATCHDOG_TIMEOUT_SEC:.0f}s, exiting for service restart.",
+                    file=sys.stderr,
+                )
+                os._exit(1)
+
+    thread = threading.Thread(target=_watchdog_loop, daemon=True, name="oled-watchdog")
+    thread.start()
+
+
+@contextlib.contextmanager
+def _i2c_op_timeout(timeout_sec):
+    if timeout_sec <= 0:
+        yield
+        return
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def _handle_timeout(_signum, _frame):
+        raise TimeoutError("I2C operation timeout")
+
+    old_handler = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, _handle_timeout)
+    old_timer = signal.setitimer(signal.ITIMER_REAL, timeout_sec)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, old_timer[0], old_timer[1])
+        signal.signal(signal.SIGALRM, old_handler)
 
 def _mk_i2c():
     # Calm the bus by lowering the frequency
@@ -173,7 +224,8 @@ def disp_init():
     time.sleep(0.05)
 
     with i2c_lock():
-        i2c = _mk_i2c()
+        with _i2c_op_timeout(I2C_OP_TIMEOUT_SEC):
+            i2c = _mk_i2c()
 
         # Wait for the bus lock
         t0 = time.time()
@@ -187,9 +239,11 @@ def disp_init():
         finally:
             i2c.unlock()
 
-        disp = adafruit_ssd1306.SSD1306_I2C(128, 32, i2c, addr=0x3C, reset=None)
+        with _i2c_op_timeout(I2C_OP_TIMEOUT_SEC):
+            disp = adafruit_ssd1306.SSD1306_I2C(128, 32, i2c, addr=0x3C, reset=None)
         disp.fill(0)
         disp.show()
+    _touch_progress()
     _OLED_DISABLED = False
     return disp
 
@@ -204,12 +258,15 @@ def safe_disp_call(fn, *args, **kwargs):
     delay = 0.05
     for attempt in range(1, 4):
         try:
+            _touch_progress()
             if _OLED_DISABLED and attempt == 1:
                 recover_oled(hard=False)
             with i2c_lock():
-                out = fn(*args, **kwargs)
+                with _i2c_op_timeout(I2C_OP_TIMEOUT_SEC):
+                    out = fn(*args, **kwargs)
             _FAILS = 0
             _OLED_DISABLED = False
+            _touch_progress()
             return out
 
         except TimeoutError:
@@ -243,6 +300,7 @@ def safe_disp_call(fn, *args, **kwargs):
 
 # --- Canvas initialisation ---
 try:
+    _start_watchdog()
     disp = disp_init()
 except Exception:
     disp = None
@@ -352,6 +410,7 @@ def _white_test(lock):
 
 def auto_slider(lock):
     while True:
+        _touch_progress()
         misc.reload_conf()
 
         if misc.conf['oled'].get('white-test', False):
