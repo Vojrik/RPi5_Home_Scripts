@@ -51,6 +51,7 @@ I2C_REOPEN_AFTER_ERRORS = 3
 I2C_REOPEN_MIN_INTERVAL_SEC = 5.0
 I2C_OP_TIMEOUT_SEC = float(os.environ.get("I2C_OP_TIMEOUT_SEC", "1.5"))
 WATCHDOG_TIMEOUT_SEC = float(os.environ.get("WATCHDOG_TIMEOUT_SEC", "20"))
+I2C_INIT_RETRY_SEC = float(os.environ.get("I2C_INIT_RETRY_SEC", "5"))
 _LAST_PROGRESS_AT = time.monotonic()
 
 
@@ -181,6 +182,34 @@ def reopen_bus(bus, bus_num):
     except Exception:
         pass
     return open_bus(bus_num)
+
+
+def list_i2c_buses():
+    buses = []
+    try:
+        for name in os.listdir("/dev"):
+            if not name.startswith("i2c-"):
+                continue
+            try:
+                buses.append(int(name.split("-", 1)[1]))
+            except ValueError:
+                continue
+    except OSError:
+        return []
+    return sorted(set(buses))
+
+
+def pick_i2c_bus(preferred_bus):
+    device = f"/dev/i2c-{preferred_bus}"
+    if os.path.exists(device):
+        return preferred_bus
+    buses = list_i2c_buses()
+    if not buses:
+        return None
+    print(
+        f"Preferred I2C bus {preferred_bus} missing; trying available bus {buses[0]} ({', '.join(str(b) for b in buses)})."
+    )
+    return buses[0]
 
 def init_ina219(bus, addr, allow_scan=True):
     delay = 0.05
@@ -351,20 +380,40 @@ def main():
             print(f"MQTT setup failed: {exc}")
             return 1
 
-    try:
-        bus = open_bus(args.i2c_bus)
-    except FileNotFoundError:
-        print(f"I2C bus /dev/i2c-{args.i2c_bus} not found. Enable I2C in system config.")
-        return 1
-
+    bus = None
     addr = None
-    try:
-        addr = init_ina219(bus, args.i2c_address, allow_scan=args.i2c_address is None)
-    except RuntimeError as exc:
-        print(str(exc))
-        return 1
+    active_bus = None
+    last_init_error_at = 0.0
+    while bus is None or addr is None:
+        touch_progress()
+        active_bus = pick_i2c_bus(args.i2c_bus)
+        if active_bus is None:
+            now = time.time()
+            if now - last_init_error_at > 5:
+                print("No /dev/i2c-* devices found; waiting for I2C bus.")
+                last_init_error_at = now
+            time.sleep(I2C_INIT_RETRY_SEC)
+            continue
+        try:
+            bus = open_bus(active_bus)
+            addr = init_ina219(bus, args.i2c_address, allow_scan=args.i2c_address is None)
+        except (FileNotFoundError, RuntimeError, OSError) as exc:
+            now = time.time()
+            if now - last_init_error_at > 5:
+                print(f"I2C init failed on bus {active_bus}: {exc}")
+                last_init_error_at = now
+            try:
+                if bus is not None:
+                    bus.close()
+            except Exception:
+                pass
+            bus = None
+            addr = None
+            time.sleep(I2C_INIT_RETRY_SEC)
+            continue
 
     print(f"INA219 detected at 0x{addr:02X}")
+    print(f"Using I2C bus {active_bus}")
     print(f"Rshunt={RSHUNT_OHM:.6f} Ohm, current_lsb={CURRENT_LSB_A:.9f} A")
     print("Press Ctrl+C to stop.")
 
@@ -389,7 +438,11 @@ def main():
                     and now - last_reopen_at >= I2C_REOPEN_MIN_INTERVAL_SEC
                 ):
                     try:
-                        bus = reopen_bus(bus, args.i2c_bus)
+                        selected_bus = pick_i2c_bus(active_bus if active_bus is not None else args.i2c_bus)
+                        if selected_bus is None:
+                            raise RuntimeError("No /dev/i2c-* devices found.")
+                        active_bus = selected_bus
+                        bus = reopen_bus(bus, active_bus)
                         addr = init_ina219(
                             bus,
                             args.i2c_address,

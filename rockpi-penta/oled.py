@@ -189,7 +189,8 @@ def _gpio_i2c_unstick():
     _run_quiet(["raspi-gpio", "set", "2", "ip", "pu"])
 
 def _hard_i2c_restart():
-    # Reload the drivers in case the bus is stuck
+    # On Pi 5 / RP1, unloading i2c modules can reshuffle/remove bus nodes.
+    # Prefer bus-level recovery only.
     global _LAST_HARD_RESET_AT
     if os.geteuid() != 0:
         return
@@ -198,20 +199,8 @@ def _hard_i2c_restart():
         return
     _LAST_HARD_RESET_AT = now
     _systemctl("stop", "nas-ina219.service")
-    cmds = [
-        ["modprobe", "-r", "i2c_bcm2835"],
-        ["modprobe", "-r", "i2c-dev"],
-    ]
-    for c in cmds:
-        _run_quiet(c)
     _gpio_i2c_unstick()
     _reset_i2c_designware()
-    cmds = [
-        ["modprobe", "i2c_bcm2835"],
-        ["modprobe", "i2c-dev"],
-    ]
-    for c in cmds:
-        _run_quiet(c)
     time.sleep(0.3)
     _systemctl("start", "nas-ina219.service")
 
