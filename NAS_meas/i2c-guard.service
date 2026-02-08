@@ -4,5 +4,5 @@ After=multi-user.target
 
 [Service]
 Type=oneshot
+EnvironmentFile=-/home/vojrik/Scripts/NAS_meas/i2c-guard.env
 ExecStart=/usr/bin/env bash /home/vojrik/Scripts/NAS_meas/i2c-guard.sh
-
