@@ -1,0 +1,8 @@
+[Unit]
+Description=I2C timeout guard and recovery
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/env bash /home/vojrik/Scripts/NAS_meas/i2c-guard.sh
+
