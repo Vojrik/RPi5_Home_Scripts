@@ -29,6 +29,8 @@ _FAILS = 0
 _HARD_RESET_AFTER = 2  # escalate to a hard restart after repeated failures
 _HARD_RESET_COOLDOWN_SEC = 10
 _LAST_HARD_RESET_AT = 0.0
+_RECOVERY_COOLDOWN_SEC = 60
+_NEXT_RECOVERY_AT = 0.0
 I2C_OP_TIMEOUT_SEC = float(os.environ.get("I2C_OP_TIMEOUT_SEC", "1.5"))
 WATCHDOG_TIMEOUT_SEC = float(os.environ.get("WATCHDOG_TIMEOUT_SEC", "25"))
 _LAST_PROGRESS_AT = time.monotonic()
@@ -198,11 +200,9 @@ def _hard_i2c_restart():
     if now - _LAST_HARD_RESET_AT < _HARD_RESET_COOLDOWN_SEC:
         return
     _LAST_HARD_RESET_AT = now
-    _systemctl("stop", "nas-ina219.service")
     _gpio_i2c_unstick()
     _reset_i2c_designware()
     time.sleep(0.3)
-    _systemctl("start", "nas-ina219.service")
 
 def disp_init():
     """Initialise OLED and I2C while clearing any previous state."""
@@ -253,7 +253,7 @@ def recover_oled(hard=False):
 
 def safe_disp_call(fn, *args, **kwargs):
     """Wrapper for SSD1306 calls. Retries + re-init on Errno 121/110 and TimeoutError."""
-    global _FAILS, _OLED_DISABLED
+    global _FAILS, _OLED_DISABLED, _NEXT_RECOVERY_AT
     delay = 0.05
     for attempt in range(1, 4):
         try:
@@ -295,6 +295,7 @@ def safe_disp_call(fn, *args, **kwargs):
             continue
 
     _OLED_DISABLED = True
+    _NEXT_RECOVERY_AT = time.monotonic() + _RECOVERY_COOLDOWN_SEC
     return None
 
 # --- Canvas initialisation ---
@@ -419,9 +420,12 @@ def auto_slider(lock):
 
         if misc.conf['slider']['auto']:
             if _OLED_DISABLED:
-                try:
-                    recover_oled(hard=False)
-                except Exception:
+                if time.monotonic() >= _NEXT_RECOVERY_AT:
+                    try:
+                        recover_oled(hard=False)
+                    except Exception:
+                        _sleep_with_heartbeat(2)
+                else:
                     _sleep_with_heartbeat(2)
             else:
                 slider(lock)
