@@ -34,6 +34,7 @@ _NEXT_RECOVERY_AT = 0.0
 I2C_OP_TIMEOUT_SEC = float(os.environ.get("I2C_OP_TIMEOUT_SEC", "1.5"))
 WATCHDOG_TIMEOUT_SEC = float(os.environ.get("WATCHDOG_TIMEOUT_SEC", "25"))
 _LAST_PROGRESS_AT = time.monotonic()
+OLED_I2C_FREQ_HZ = int(os.environ.get("OLED_I2C_FREQ_HZ", "50000"))
 
 # --- Fonts ---
 font = {
@@ -128,8 +129,8 @@ def _i2c_op_timeout(timeout_sec):
         signal.signal(signal.SIGALRM, old_handler)
 
 def _mk_i2c():
-    # Calm the bus by lowering the frequency
-    return busio.I2C(board.SCL, board.SDA, frequency=100_000)
+    # Slower clock lowers error rate on marginal wiring/noisy bus.
+    return busio.I2C(board.SCL, board.SDA, frequency=OLED_I2C_FREQ_HZ)
 
 def _run_quiet(cmd):
     subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
