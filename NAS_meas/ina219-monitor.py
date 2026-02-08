@@ -49,9 +49,11 @@ ENV_FILE = os.path.join(os.path.dirname(__file__), ".env")
 I2C_LOCK_PATH = "/home/vojrik/.i2c-1.lock"
 I2C_REOPEN_AFTER_ERRORS = 3
 I2C_REOPEN_MIN_INTERVAL_SEC = 5.0
-I2C_OP_TIMEOUT_SEC = float(os.environ.get("I2C_OP_TIMEOUT_SEC", "1.5"))
-WATCHDOG_TIMEOUT_SEC = float(os.environ.get("WATCHDOG_TIMEOUT_SEC", "20"))
-I2C_INIT_RETRY_SEC = float(os.environ.get("I2C_INIT_RETRY_SEC", "5"))
+I2C_OP_TIMEOUT_SEC = 1.5
+WATCHDOG_TIMEOUT_SEC = 20.0
+I2C_INIT_RETRY_SEC = 5.0
+I2C_ERROR_BACKOFF_MAX_SEC = 60.0
+I2C_ERROR_BACKOFF_FACTOR = 2.0
 _LAST_PROGRESS_AT = time.monotonic()
 
 
@@ -333,8 +335,8 @@ def parse_args(env):
     parser.add_argument(
         "--i2c-address",
         type=lambda value: int(value, 0),
-        default=get_env(env, "I2C_ADDRESS"),
-        help="INA219 I2C address (default: auto-scan 0x40-0x4F).",
+        default=get_env(env, "I2C_ADDRESS", "0x40"),
+        help="INA219 I2C address (default: 0x40).",
     )
     parser.add_argument(
         "--interval",
@@ -363,11 +365,28 @@ def read_measurements(bus, addr, retries=3):
 
 
 def main():
+    global I2C_OP_TIMEOUT_SEC, WATCHDOG_TIMEOUT_SEC, I2C_INIT_RETRY_SEC
+    global I2C_REOPEN_AFTER_ERRORS, I2C_REOPEN_MIN_INTERVAL_SEC
+    global I2C_ERROR_BACKOFF_MAX_SEC, I2C_ERROR_BACKOFF_FACTOR
+
     if SMBus is None:
         print("Missing smbus/smbus2. Install python3-smbus or smbus2.")
         return 1
 
     env = load_env_file(ENV_FILE)
+    I2C_OP_TIMEOUT_SEC = float(get_env(env, "I2C_OP_TIMEOUT_SEC", str(I2C_OP_TIMEOUT_SEC)))
+    WATCHDOG_TIMEOUT_SEC = float(get_env(env, "WATCHDOG_TIMEOUT_SEC", str(WATCHDOG_TIMEOUT_SEC)))
+    I2C_INIT_RETRY_SEC = float(get_env(env, "I2C_INIT_RETRY_SEC", str(I2C_INIT_RETRY_SEC)))
+    I2C_REOPEN_AFTER_ERRORS = int(get_env(env, "I2C_REOPEN_AFTER_ERRORS", str(I2C_REOPEN_AFTER_ERRORS)))
+    I2C_REOPEN_MIN_INTERVAL_SEC = float(
+        get_env(env, "I2C_REOPEN_MIN_INTERVAL_SEC", str(I2C_REOPEN_MIN_INTERVAL_SEC))
+    )
+    I2C_ERROR_BACKOFF_MAX_SEC = float(
+        get_env(env, "I2C_ERROR_BACKOFF_MAX_SEC", str(I2C_ERROR_BACKOFF_MAX_SEC))
+    )
+    I2C_ERROR_BACKOFF_FACTOR = float(
+        get_env(env, "I2C_ERROR_BACKOFF_FACTOR", str(I2C_ERROR_BACKOFF_FACTOR))
+    )
     args = parse_args(env)
     start_watchdog()
 
@@ -396,7 +415,7 @@ def main():
             continue
         try:
             bus = open_bus(active_bus)
-            addr = init_ina219(bus, args.i2c_address, allow_scan=args.i2c_address is None)
+            addr = init_ina219(bus, args.i2c_address, allow_scan=False)
         except (FileNotFoundError, RuntimeError, OSError) as exc:
             now = time.time()
             if now - last_init_error_at > 5:
@@ -421,12 +440,14 @@ def main():
     last_availability_at = 0.0
     last_reopen_at = 0.0
     consecutive_errors = 0
+    error_backoff_sec = max(args.interval, 1.0)
     try:
         while True:
             touch_progress()
             try:
                 shunt_raw, bus_raw, current_raw, power_raw = read_measurements(bus, addr)
                 consecutive_errors = 0
+                error_backoff_sec = max(args.interval, 1.0)
             except (OSError, TimeoutError) as exc:
                 now = time.time()
                 consecutive_errors += 1
@@ -446,14 +467,18 @@ def main():
                         addr = init_ina219(
                             bus,
                             args.i2c_address,
-                            allow_scan=args.i2c_address is None,
+                            allow_scan=False,
                         )
                         consecutive_errors = 0
                         last_reopen_at = now
                     except Exception as reopen_exc:
                         print(f"I2C reopen failed: {reopen_exc}")
                         last_reopen_at = now
-                time.sleep(args.interval)
+                time.sleep(error_backoff_sec)
+                error_backoff_sec = min(
+                    I2C_ERROR_BACKOFF_MAX_SEC,
+                    max(args.interval, error_backoff_sec * I2C_ERROR_BACKOFF_FACTOR),
+                )
                 touch_progress()
                 continue
 
